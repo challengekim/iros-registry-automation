@@ -2,18 +2,18 @@
 """인터넷등기소 장바구니 자동화
 회사명 목록을 읽어 IROS에서 법인등기부등본(말소사항포함)을 장바구니에 자동으로 담습니다.
 Usage: python3 iros_cart.py [config.json] [시작인덱스]
+
+검증일: 2026-04-09 (220건 성공)
 """
 import json, os, sys, time, re
 from datetime import datetime
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import sync_playwright, TimeoutError as PWT
 
-# ---------------------------------------------------------------------------
-# 설정 로드
-# ---------------------------------------------------------------------------
 
 def load_config(path="config.json"):
     with open(path) as f:
         return json.load(f)
+
 
 def load_log(path):
     try:
@@ -22,221 +22,148 @@ def load_log(path):
     except:
         return {"completed": [], "failed": [], "skipped": []}
 
+
 def save_log(log, path):
     os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
     with open(path, "w") as f:
         json.dump(log, f, ensure_ascii=False, indent=2)
 
-def save_skip_fail(log, log_path, name, reason, bizno_results=None):
-    """실패/스킵 기록 + bizno 상태 첨부"""
-    entry = {"name": name, "reason": reason, "time": datetime.now().isoformat()}
-    if bizno_results:
-        for r in bizno_results:
-            if r.get('company_name', '') == name or name in r.get('company_name', ''):
-                entry['biz_status'] = r.get('biz_status', '')
-                entry['pin'] = r.get('formatted_pin', r.get('pin', ''))
-                break
-    if reason == "skip":
-        log["skipped"].append(entry)
-    else:
-        log["failed"].append(entry)
-    save_log(log, log_path)
-
-# ---------------------------------------------------------------------------
-# Playwright 헬퍼
-# ---------------------------------------------------------------------------
 
 def dismiss(page):
-    """모달/팝업 숨기기"""
+    """팝업 닫기 + 모달 숨기기"""
+    page.evaluate("""() => {
+        document.querySelectorAll('a,button').forEach(b => {
+            if (b.offsetParent !== null && b.id.includes('popup')) {
+                const t = b.textContent.trim();
+                if (b.id.includes('btn_cancel2') && t === '취소') b.click();
+                else if (b.id.includes('btn_confirm1') && t === '확인') b.click();
+            }
+        });
+        document.querySelectorAll('#_modal,.w2modal_popup').forEach(m => {
+            m.style.display='none'; m.style.pointerEvents='none';
+        });
+    }""")
+
+
+def select_valid(page):
+    """살아있는 등기 + 주말여부 N 선택"""
+    return page.evaluate("""() => {
+        const rs = document.querySelectorAll('input[type="radio"][id*="grd_srch_rslt_list"]');
+        for (const r of rs) {
+            const row = r.closest('tr') || r.parentElement;
+            if (!row) continue;
+            const t = row.innerText;
+            if (t.includes('살아있는 등기')) {
+                const c = t.split('\\t');
+                if (c.length >= 2 && c[c.length-2].trim() === 'N') { r.click(); return true; }
+            }
+        }
+        return false;
+    }""")
+
+
+def process(page, name, is_first):
+    """회사 1건 처리: 검색 → 선택 → 장바구니 담기"""
+    clean = re.sub(r'[^가-힣a-zA-Z0-9\s]', '', name).strip()
+    if not clean:
+        clean = name
+
     try:
+        if is_first:
+            page.evaluate("document.getElementById('mf_wfm_potal_main_wf_header_gen_depth1_0_gen_depth2_1_gen_depth3_0_btn_top_menu3a').click()")
+            page.wait_for_timeout(2000)
+            dismiss(page)
+            page.wait_for_timeout(1000)
+
+        dismiss(page)
+
+        # 드롭다운 - WebSquare API
         page.evaluate("""() => {
-            document.querySelectorAll('#_modal, .w2modal_popup, .ui-dialog').forEach(m => {
-                m.style.display = 'none';
-                m.style.pointerEvents = 'none';
-            });
+            WebSquare.util.getComponentById('mf_wfm_potal_main_wfm_content_sel_conm_regt_no').setSelectedIndex(1);
+            WebSquare.util.getComponentById('mf_wfm_potal_main_wfm_content_sel_conm_corp_cls_cd').setSelectedIndex(1);
         }""")
-    except:
-        pass
+        page.wait_for_timeout(300)
 
-def wait_ready(page, timeout=10000):
-    """페이지 로딩 대기"""
-    try:
-        page.wait_for_load_state("networkidle", timeout=timeout)
-    except:
-        pass
-
-def select_valid(page, selector, timeout=5000):
-    """선택자로 요소를 찾아 클릭, 없으면 None 반환"""
-    try:
-        el = page.wait_for_selector(selector, timeout=timeout)
-        if el:
-            el.click()
-            return True
-    except:
-        pass
-    return False
-
-def click_ok_button(page):
-    """확인/OK 버튼 클릭 시도"""
-    for sel in [
-        'input[value="확인"]',
-        'button:has-text("확인")',
-        'a:has-text("확인")',
-        '.btn_confirm',
-    ]:
-        try:
-            page.click(sel, timeout=2000)
-            return True
-        except:
-            continue
-    return False
-
-# ---------------------------------------------------------------------------
-# 핵심 처리 함수
-# ---------------------------------------------------------------------------
-
-def search_company(page, name):
-    """회사명 검색"""
-    # 검색창 클리어 후 입력
-    for sel in ['input[id*="inp_sText"]', 'input[name*="sText"]', '#inp_sText']:
-        try:
-            page.fill(sel, '', timeout=3000)
-            page.fill(sel, name, timeout=3000)
-            page.keyboard.press('Enter')
-            page.wait_for_timeout(2500)
-            return True
-        except:
-            continue
-
-    # WebSquare API 시도
-    try:
-        page.evaluate(f"""() => {{
-            const inputs = document.querySelectorAll('input[type="text"]');
-            for (const inp of inputs) {{
-                if (inp.id && inp.id.includes('sText')) {{
-                    inp.value = '{name}';
-                    inp.dispatchEvent(new Event('input', {{bubbles: true}}));
-                    inp.dispatchEvent(new Event('change', {{bubbles: true}}));
-                    break;
-                }}
-            }}
-        }}""")
-        page.keyboard.press('Enter')
+        # 검색어 입력 + 검색
+        safe_name = clean.replace("'", "\\'")
+        page.evaluate(
+            "() => {"
+            "const inp = document.getElementById('mf_wfm_potal_main_wfm_content_sbx_conm___input');"
+            "inp.value = '';"
+            "inp.dispatchEvent(new Event('input', {bubbles:true}));"
+            "inp.value = '" + safe_name + "';"
+            "inp.dispatchEvent(new Event('input', {bubbles:true}));"
+            "inp.dispatchEvent(new Event('change', {bubbles:true}));"
+            "}"
+        )
+        page.wait_for_timeout(200)
+        dismiss(page)
+        page.evaluate("document.getElementById('mf_wfm_potal_main_wfm_content_btn_conm_search').click()")
         page.wait_for_timeout(2500)
-        return True
-    except:
-        pass
-    return False
 
-def get_search_results(page):
-    """검색 결과 행 수 반환"""
-    try:
-        result = page.evaluate("""() => {
-            const rows = document.querySelectorAll('tr[id*="gridRow"], .w2grid_row, tr.datarow');
-            return rows.length;
-        }""")
-        return result or 0
-    except:
-        return 0
+        # 결과 선택
+        if not select_valid(page):
+            return "skipped"
 
-def select_corp_type(page):
-    """법인 유형 선택 (법인등기부등본 말소사항포함)"""
-    # 등기부 유형 선택 시도
-    for sel in [
-        'input[id*="rdo_0"][value*="법인"]',
-        'label:has-text("법인")',
-        'input[id*="reg_type_2"]',
-    ]:
-        try:
-            page.click(sel, timeout=2000)
-            page.wait_for_timeout(500)
-            break
-        except:
-            continue
+        # 상태 기반 플로우 (말소사항 선택 → 체크박스 → 다음)
+        malso_done = False
+        chk_done = False
+        for step in range(10):
+            dismiss(page)
+            page.wait_for_timeout(300)
 
-    # 말소사항 포함 선택
-    for sel in [
-        'input[id*="malso"][value*="포함"]',
-        'label:has-text("말소사항포함")',
-        'input[id*="chk_malso"]',
-    ]:
-        try:
-            page.click(sel, timeout=2000)
-            page.wait_for_timeout(500)
-            break
-        except:
-            continue
+            state = page.evaluate("""() => {
+                const hasAdd = !!document.getElementById('mf_wfm_potal_main_wfm_content_btn_new_add');
+                const hasPay = !!document.getElementById('mf_wfm_potal_main_wfm_content_btn_pay');
+                const hasMalso = !!document.querySelector('label[for="mf_wfm_potal_main_wfm_content_rad_crg_kind_input_1"]');
+                const hasChk14 = !!document.getElementById('G_mf_wfm_potal_main_wfm_content_grd_item_sel_obj_list___checkbox_dynamic_checkbox_14_0_14');
+                const hasNext = !!document.getElementById('mf_wfm_potal_main_wfm_content_btn_next');
+                return {hasAdd, hasPay, hasMalso, hasChk14, hasNext};
+            }""")
 
-def add_to_cart(page):
-    """장바구니 담기 버튼 클릭"""
-    for sel in [
-        'input[id*="btn_cart"]',
-        'button:has-text("장바구니")',
-        'a:has-text("장바구니")',
-        'input[value*="장바구니"]',
-    ]:
-        try:
-            page.click(sel, timeout=3000)
-            page.wait_for_timeout(1500)
-            return True
-        except:
-            continue
-    return False
+            if state.get("hasPay"):
+                count = page.evaluate("""() => {
+                    const m = document.body.innerText.match(/전체\\s*(\\d+)\\s*건/);
+                    return m ? parseInt(m[1]) : -1;
+                }""")
+                page.evaluate("document.getElementById('mf_wfm_potal_main_wf_header_gen_depth1_0_gen_depth2_1_gen_depth3_0_btn_top_menu3a').click()")
+                page.wait_for_timeout(2000)
+                dismiss(page)
+                page.wait_for_timeout(1000)
+                return f"completed:{count}"
 
-def process(page, name, log, log_path, bizno_results=None):
-    """회사 한 건 처리: 검색 -> 선택 -> 장바구니"""
-    dismiss(page)
+            if state.get("hasMalso") and not malso_done:
+                page.evaluate("""() => {
+                    const l = document.querySelector('label[for="mf_wfm_potal_main_wfm_content_rad_crg_kind_input_1"]');
+                    if (l) l.click();
+                }""")
+                malso_done = True
+                page.wait_for_timeout(300)
 
-    # 검색
-    if not search_company(page, name):
-        print(f"  [{name}] 검색창 접근 실패 - skip")
-        save_skip_fail(log, log_path, name, "search_fail", bizno_results)
-        return "fail"
+            if state.get("hasChk14") and not chk_done:
+                page.evaluate("""() => {
+                    const c14 = document.getElementById('G_mf_wfm_potal_main_wfm_content_grd_item_sel_obj_list___checkbox_dynamic_checkbox_14_0_14');
+                    if (c14 && !c14.checked) c14.click();
+                    const c15 = document.getElementById('G_mf_wfm_potal_main_wfm_content_grd_item_sel_obj_list___checkbox_dynamic_checkbox_15_0_15');
+                    if (c15 && !c15.checked) c15.click();
+                }""")
+                chk_done = True
+                page.wait_for_timeout(300)
 
-    page.wait_for_timeout(2000)
-    row_count = get_search_results(page)
+            if state.get("hasNext"):
+                dismiss(page)
+                page.evaluate("document.getElementById('mf_wfm_potal_main_wfm_content_btn_next').click()")
+                page.wait_for_timeout(1800)
+                dismiss(page)
+                page.wait_for_timeout(500)
+                dismiss(page)
+            else:
+                page.wait_for_timeout(1000)
 
-    if row_count == 0:
-        print(f"  [{name}] 검색 결과 없음 - skip")
-        save_skip_fail(log, log_path, name, "skip", bizno_results)
-        return "skip"
+        return "completed_noclick"
+    except Exception as e:
+        return f"error:{str(e)[:100]}"
 
-    # 첫 번째 검색 결과 클릭
-    try:
-        page.evaluate("""() => {
-            const rows = document.querySelectorAll('tr[id*="gridRow"], .w2grid_row, tr.datarow');
-            if (rows.length > 0) rows[0].click();
-        }""")
-        page.wait_for_timeout(1000)
-    except:
-        pass
-
-    # 법인 유형 선택
-    select_corp_type(page)
-    page.wait_for_timeout(500)
-
-    # 장바구니 담기
-    if not add_to_cart(page):
-        print(f"  [{name}] 장바구니 버튼 없음 - fail")
-        save_skip_fail(log, log_path, name, "cart_fail", bizno_results)
-        return "fail"
-
-    # 확인 팝업 처리
-    page.wait_for_timeout(1000)
-    click_ok_button(page)
-    page.wait_for_timeout(500)
-    dismiss(page)
-
-    print(f"  [{name}] 장바구니 담기 완료")
-    log["completed"].append({
-        "name": name,
-        "time": datetime.now().isoformat()
-    })
-    return "ok"
-
-# ---------------------------------------------------------------------------
-# 메인
-# ---------------------------------------------------------------------------
 
 def main():
     # 인자 파싱
@@ -252,105 +179,106 @@ def main():
     companies_path = cfg.get('companies_list', './data/iros_companies.json')
     log_path = cfg.get('cart_log', './logs/cart_log.json')
 
-    # bizno 결과 로드 (스킵 이유 기록용)
-    bizno_results = []
-    bizno_path = cfg.get('bizno_results', './data/bizno_results.json')
-    if os.path.exists(bizno_path):
-        with open(bizno_path) as f:
-            bizno_results = json.load(f)
-
     with open(companies_path) as f:
         companies = json.load(f)
 
     log = load_log(log_path)
-    completed_names = set(c['name'] for c in log.get('completed', []))
-    skipped_names = set(c['name'] for c in log.get('skipped', []))
+    done_set = set(log["completed"]) | set(log["skipped"]) | set(
+        c["name"] if isinstance(c, dict) else c for c in log["failed"]
+    )
 
-    pending = [c for c in companies[start_idx:] if c not in completed_names]
-    total = len(pending)
-    print(f"대상: {total}건 (전체: {len(companies)}, 시작: {start_idx})")
-    print(f"이미완료: {len(completed_names)}건, 스킵: {len(skipped_names)}건")
+    print(f"총 {len(companies)}개, 이미처리 {len(done_set)}개, index {start_idx}부터 시작")
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=False,
-            slow_mo=100,
-            args=["--window-size=1400,900"]
-        )
-        ctx = browser.new_context(
-            viewport={"width": 1400, "height": 900},
-            locale="ko-KR"
-        )
+        browser = p.chromium.launch(headless=False, slow_mo=50, args=["--window-size=1400,900"])
+        ctx = browser.new_context(viewport={"width": 1400, "height": 900}, locale="ko-KR")
         page = ctx.new_page()
         page.on("dialog", lambda d: d.accept())
-
         page.goto("https://www.iros.go.kr/index.jsp", wait_until="domcontentloaded", timeout=30000)
 
         print("\n" + "=" * 50)
-        print("  iros.go.kr 로그인 후 Enter")
+        print("  iros.go.kr 로그인 후 Enter 누르세요")
         print("=" * 50)
         input(">>> ")
 
-        # 부동산 등기 열람/발급 메뉴 이동
-        print("등기 검색 페이지 이동 중...")
-        try:
-            page.evaluate("""() => {
-                const links = document.querySelectorAll('a');
-                for (const a of links) {
-                    if (a.textContent.includes('열람') || a.textContent.includes('부동산')) {
-                        a.click(); break;
-                    }
-                }
-            }""")
-        except:
-            pass
-        page.wait_for_timeout(3000)
-        dismiss(page)
+        is_first = True
+        ok = fail = skip = 0
 
-        ok, fail, skip = 0, 0, 0
+        for i in range(start_idx, len(companies)):
+            name = companies[i]
+            if name in done_set:
+                continue
 
-        for i, name in enumerate(pending):
-            print(f"[{i+1}/{total}] {name}", end=" ... ", flush=True)
+            print(f"[{i+1}/{len(companies)}] {name}", end=" ")
+            status = process(page, name, is_first)
 
-            result = process(page, name, log, log_path, bizno_results)
+            # 실패시 1회 재시도
+            if status.startswith("error"):
+                dismiss(page)
+                page.wait_for_timeout(1000)
+                try:
+                    page.evaluate("document.getElementById('mf_wfm_potal_main_wf_header_gen_depth1_0_gen_depth2_1_gen_depth3_0_btn_top_menu3a').click()")
+                    page.wait_for_timeout(2000)
+                    dismiss(page)
+                    page.wait_for_timeout(1000)
+                except:
+                    pass
+                status = process(page, name, True)
 
-            if result == "ok":
+            if status.startswith("completed"):
+                log["completed"].append(name)
+                is_first = True
                 ok += 1
-            elif result == "skip":
+                cart = status.split(":")[1] if ":" in status else "?"
+                print(f"✓ cart:{cart} (total:{ok})")
+            elif status == "skipped":
+                log["skipped"].append(name)
                 skip += 1
+                print(f"- skip")
             else:
+                log["failed"].append({"name": name, "error": status, "time": datetime.now().isoformat()})
+                is_first = True
                 fail += 1
+                print(f"✗ {status}")
+                try:
+                    dismiss(page)
+                    page.evaluate("document.getElementById('mf_wfm_potal_main_wf_header_gen_depth1_0_gen_depth2_1_gen_depth3_0_btn_top_menu3a').click()")
+                    page.wait_for_timeout(2000)
+                    dismiss(page)
+                    page.wait_for_timeout(1000)
+                except:
+                    pass
 
             # 10건마다 저장
-            if (i + 1) % 10 == 0:
+            if (ok + fail + skip) % 10 == 0:
                 save_log(log, log_path)
-                print(f"  --- 진행: {i+1}/{total} (성공:{ok} 실패:{fail} 스킵:{skip}) ---")
-
-            page.wait_for_timeout(1000)
+                print(f"  >> 완료:{ok} 실패:{fail} 건너뜀:{skip}")
 
         save_log(log, log_path)
-
         print(f"\n{'='*50}")
-        print(f"  완료! 성공:{ok} 실패:{fail} 스킵:{skip}")
+        print(f"  완료! 성공:{ok} 실패:{fail} 건너뜀:{skip}")
+        print(f"  로그: {log_path}")
         print(f"{'='*50}")
 
-        # 결제대상목록으로 이동
-        print("결제대상목록 페이지로 이동 중...")
+        # 결제대상목록 페이지로 이동
+        print("  결제대상목록 페이지로 이동합니다...")
         try:
-            page.evaluate("""() => {
-                const links = document.querySelectorAll('a');
-                for (const a of links) {
-                    if (a.textContent.includes('결제') || a.textContent.includes('장바구니')) {
-                        a.click(); break;
-                    }
-                }
-            }""")
+            page.evaluate("document.getElementById('mf_wfm_potal_main_wf_header_gen_depth1_0_gen_depth2_1_gen_depth3_0_btn_top_menu3a').click()")
+            page.wait_for_timeout(2000)
+            dismiss(page)
+            page.wait_for_timeout(1000)
+            page.evaluate("document.getElementById('mf_wfm_potal_main_wfm_content_btn_pay_list').click()")
             page.wait_for_timeout(3000)
+            count = page.evaluate("""() => {
+                const m = document.body.innerText.match(/전체\\s*(\\d+)\\s*건/);
+                return m ? m[1] : '확인불가';
+            }""")
+            print(f"  ★ 결제대상: {count}건 - 10건씩 결제해주세요!")
         except:
-            pass
-
-        input(">>> Enter로 브라우저 닫기 ")
+            print("  결제대상 페이지 이동 실패 - 직접 이동해주세요")
+        input(">>> 결제 완료 후 Enter (브라우저 닫힘) ")
         browser.close()
+
 
 if __name__ == "__main__":
     main()
