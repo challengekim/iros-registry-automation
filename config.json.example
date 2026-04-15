@@ -1,6 +1,6 @@
 {
   "excel_path": "./data/고객리스트.xlsx",
-  "excel_sheet": "태우님 추가 요청",
+  "excel_sheet": "Sheet1",
   "excel_pin_column": 6,
   "excel_userid_column": 10,
   "excel_company_column": 12,

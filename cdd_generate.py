@@ -57,7 +57,7 @@ def fuzzy_match_file(company_name, pdf_files):
 def load_user_ids(cfg):
     """MA 엑셀에서 User ID 매핑 로드
     - 사업자등록번호 탭: B=userID, C=pin
-    - 태우님추가요청 탭: J=userID, K=pin
+    - 추가요청 탭: J=userID, K=pin
     """
     excel_path = cfg.get('excel_path', '')
     mapping = {}  # pin(숫자만) -> userID
@@ -79,8 +79,8 @@ def load_user_ids(cfg):
                     if pin_clean:
                         mapping[pin_clean] = str(uid).strip()
 
-        # 태우님추가요청 탭
-        sheet_name = cfg.get('excel_sheet', '태우님 추가 요청')
+        # 추가요청 탭
+        sheet_name = cfg.get('excel_sheet', 'Sheet1')
         if sheet_name in wb.sheetnames:
             ws = wb[sheet_name]
             uid_col = cfg.get('excel_userid_column', 10)

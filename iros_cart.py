@@ -22,7 +22,7 @@ def load_log(path):
     try:
         with open(path) as f:
             return json.load(f)
-    except:
+    except (FileNotFoundError, json.JSONDecodeError):
         return {"completed": [], "failed": [], "skipped": []}
 
 
@@ -91,17 +91,14 @@ def process(page, name, is_first):
         page.wait_for_timeout(300)
 
         # 검색어 입력 + 검색
-        safe_name = clean.replace("'", "\\'")
-        page.evaluate(
-            "() => {"
-            "const inp = document.getElementById('mf_wfm_potal_main_wfm_content_sbx_conm___input');"
-            "inp.value = '';"
-            "inp.dispatchEvent(new Event('input', {bubbles:true}));"
-            "inp.value = '" + safe_name + "';"
-            "inp.dispatchEvent(new Event('input', {bubbles:true}));"
-            "inp.dispatchEvent(new Event('change', {bubbles:true}));"
-            "}"
-        )
+        page.evaluate("""(name) => {
+            const inp = document.getElementById('mf_wfm_potal_main_wfm_content_sbx_conm___input');
+            inp.value = '';
+            inp.dispatchEvent(new Event('input', {bubbles:true}));
+            inp.value = name;
+            inp.dispatchEvent(new Event('input', {bubbles:true}));
+            inp.dispatchEvent(new Event('change', {bubbles:true}));
+        }""", clean)
         page.wait_for_timeout(200)
         dismiss(page)
         page.evaluate("document.getElementById('mf_wfm_potal_main_wfm_content_btn_conm_search').click()")

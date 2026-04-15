@@ -44,7 +44,7 @@ cp config.json.example config.json
 | 키 | 설명 | 기본값 |
 |----|------|--------|
 | `excel_path` | 고객 엑셀 파일 경로 | `./data/고객리스트.xlsx` |
-| `excel_sheet` | 엑셀 시트명 | `태우님 추가 요청` |
+| `excel_sheet` | 엑셀 시트명 | `Sheet1` |
 | `excel_pin_column` | 사업자등록번호 열 번호 | `6` |
 | `excel_userid_column` | User ID 열 번호 | `10` |
 | `companies_list` | 상호명 기반 검색용 회사 목록 | `./data/iros_companies.json` |
@@ -249,7 +249,7 @@ python3 iros_cart_by_corpnum.py config.json
 ### Step 4: 열람/저장/파일명변경 (자동화)
 
 ```bash
-python3 iros_download.py 220
+python3 iros_download.py 220          # 220 = 결제 완료된 총 건수
 # 또는
 python3 iros_download.py config.json 220
 ```

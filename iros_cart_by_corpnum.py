@@ -9,7 +9,7 @@ Usage: python3 iros_cart_by_corpnum.py [config.json]
 
 입력 파일: {"법인등록번호": "회사명", ...} 형태의 JSON
 """
-import json, os, sys, time, re
+import json, os, sys
 from datetime import datetime
 from playwright.sync_api import sync_playwright
 
@@ -23,7 +23,7 @@ def load_log(path):
     try:
         with open(path) as f:
             return json.load(f)
-    except:
+    except (FileNotFoundError, json.JSONDecodeError):
         return {"completed": [], "failed": [], "skipped": []}
 
 
@@ -72,6 +72,8 @@ def select_result(page):
 def search_by_corpnum(page, corp_num, is_first):
     """법인등록번호로 등기부등본 검색 → 장바구니 담기"""
     clean_num = corp_num.replace('-', '')
+    if not clean_num.isdigit() or len(clean_num) != 13:
+        return "skipped"
 
     try:
         if is_first:
@@ -93,16 +95,16 @@ def search_by_corpnum(page, corp_num, is_first):
         dismiss(page)
 
         # 등록번호 입력 (하이픈 없이 13자리 숫자만)
-        page.evaluate(f"""() => {{
+        page.evaluate("""(num) => {
             const inp = document.getElementById('mf_wfm_potal_main_wfm_content_sbx_drokno___input');
-            if (inp) {{
+            if (inp) {
                 inp.value = '';
-                inp.dispatchEvent(new Event('input', {{bubbles:true}}));
-                inp.value = '{clean_num}';
-                inp.dispatchEvent(new Event('input', {{bubbles:true}}));
-                inp.dispatchEvent(new Event('change', {{bubbles:true}}));
-            }}
-        }}""")
+                inp.dispatchEvent(new Event('input', {bubbles:true}));
+                inp.value = num;
+                inp.dispatchEvent(new Event('input', {bubbles:true}));
+                inp.dispatchEvent(new Event('change', {bubbles:true}));
+            }
+        }""", clean_num)
         page.wait_for_timeout(300)
 
         # 검색 버튼 클릭
