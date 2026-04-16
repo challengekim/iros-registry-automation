@@ -3,3 +3,7 @@
 __pycache__/
 *.pyc
 .env
+config.json
+data/
+output/
+logs/
