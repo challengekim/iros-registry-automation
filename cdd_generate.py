@@ -252,7 +252,6 @@ def main():
             "등기부_목적": extract_data.get("business_purposes", ""),
             "등기부_자본금": capital_summary,
             "등기부_발행주식": auth_summary,
-            "등기부_주주": "",
             "등기부_임원": rep_info,
             "등기부_비고": issued_after,
             "user_id": user_id,
@@ -284,8 +283,8 @@ def main():
         "A. 상호(한글)", "B. 상호(영문)", "C. 법인등록번호", "D. 사업자등록번호",
         "E. 법인구분", "F. 주소", "G. 연락처", "H. 대표자성명",
         "I. 등기_주소", "J. 등기_목적", "K. 등기_자본금",
-        "L. 등기_발행주식", "M. 등기_주주", "N. 등기_임원", "O. 등기_비고",
-        "P. User ID", "Q. 등기부등본 상태", "R. 비고",
+        "L. 등기_발행주식", "M. 등기_임원", "N. 등기_비고",
+        "O. User ID", "P. 등기부등본 상태", "Q. 비고",
     ]
 
     h_font, h_fill, h_align, h_border = make_header_style()
@@ -299,7 +298,7 @@ def main():
     ws.row_dimensions[1].height = 30
 
     # 열 너비 설정
-    col_widths = [25, 20, 18, 16, 10, 40, 15, 15, 40, 30, 12, 12, 20, 20, 15, 15, 12, 20]
+    col_widths = [25, 20, 18, 16, 10, 40, 15, 15, 40, 30, 12, 12, 20, 15, 15, 12, 20]
     for i, w in enumerate(col_widths, 1):
         ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = w
 
@@ -312,7 +311,7 @@ def main():
             row["상호_한글"], row["상호_영문"], row["등록번호"], row["사업자등록번호"],
             row["법인구분"], row["주소"], row["연락처"], row["대표자"],
             row["등기부_주소"], row["등기부_목적"], row["등기부_자본금"],
-            row["등기부_발행주식"], row["등기부_주주"], row["등기부_임원"], row["등기부_비고"],
+            row["등기부_발행주식"], row["등기부_임원"], row["등기부_비고"],
             row["user_id"], row["상태"], row["비고"],
         ]
 
@@ -326,7 +325,7 @@ def main():
     ws.freeze_panes = "A2"
 
     # 자동 필터
-    ws.auto_filter.ref = f"A1:R{len(all_rows)+1}"
+    ws.auto_filter.ref = f"A1:Q{len(all_rows)+1}"
 
     wb.save(output_path)
     print(f"\nCDD 엑셀 저장 완료: {output_path}")
