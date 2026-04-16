@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
 """CDD 엑셀 생성
-bizno 결과 + User ID 매핑 + 다운로드 상태를 종합하여 CDD 엑셀을 생성합니다.
+bizno 결과 + User ID 매핑 + 다운로드 상태 + 등기부등본 PDF 추출을 종합하여 CDD 엑셀을 생성합니다.
 Usage: python3 cdd_generate.py [config.json]
 """
 import json, os, re, sys
 from difflib import SequenceMatcher
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+
+try:
+    import cdd_extract
+    _HAS_EXTRACT = True
+except ImportError:
+    _HAS_EXTRACT = False
 
 
 def load_config(path="config.json"):
@@ -190,6 +196,14 @@ def main():
         # PDF 파일 매칭
         matched_file = fuzzy_match_file(company_name, pdf_files)
 
+        # 등기부등본 PDF 추출
+        extract_data = {}
+        if matched_file and _HAS_EXTRACT:
+            try:
+                extract_data = cdd_extract.parse_one_pdf(matched_file)
+            except Exception as e:
+                print(f"  [경고] PDF 추출 실패 ({company_name}): {e}")
+
         if matched_file:
             dl_status = "완료"
             bigo = ""
@@ -203,22 +217,44 @@ def main():
             dl_status = "미완료"
             bigo = ""
 
+        # 등기부 주소: PDF 추출 우선, 없으면 bizno 주소
+        reg_address = extract_data.get("address", "") or address
+        reg_reps = extract_data.get("rep_names", "")
+        reg_roles = extract_data.get("rep_roles", "")
+        rep_info = f"{reg_reps}({reg_roles})" if reg_reps and reg_roles else reg_reps
+
+        # 발행주식 요약: 후(현재) 기준
+        issued_after = extract_data.get("issued_shares_after", "")
+        capital_after = extract_data.get("capital_after", "")
+        capital_before = extract_data.get("capital_before", "")
+        capital_summary = capital_after
+        if capital_before and capital_before != capital_after:
+            capital_summary = f"전: {capital_before} / 후: {capital_after}"
+
+        auth_before = extract_data.get("authorized_shares_before", "")
+        auth_after = extract_data.get("authorized_shares_after", "")
+        auth_summary = auth_after
+        if auth_before and auth_before != auth_after:
+            auth_summary = f"전: {auth_before}주 / 후: {auth_after}주"
+        elif auth_after:
+            auth_summary = f"{auth_after}주"
+
         row = {
             "상호_한글": company_name,
-            "상호_영문": "",
-            "등록번호": corp_reg,
+            "상호_영문": extract_data.get("company_eng", ""),
+            "등록번호": corp_reg or extract_data.get("reg_number", ""),
             "사업자등록번호": formatted_pin,
             "법인구분": "법인",
             "주소": address,
             "연락처": phone,
             "대표자": representative,
-            "등기부_주소": "",
-            "등기부_목적": "",
-            "등기부_자본금": "",
-            "등기부_발행주식": "",
+            "등기부_주소": reg_address,
+            "등기부_목적": extract_data.get("business_purposes", ""),
+            "등기부_자본금": capital_summary,
+            "등기부_발행주식": auth_summary,
             "등기부_주주": "",
-            "등기부_임원": "",
-            "등기부_비고": "",
+            "등기부_임원": rep_info,
+            "등기부_비고": issued_after,
             "user_id": user_id,
             "상태": dl_status,
             "비고": bigo,

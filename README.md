@@ -276,8 +276,48 @@ python3 cdd_generate.py
 python3 cdd_generate.py config.json
 ```
 
-- bizno 정보 + User ID + 다운로드 상태를 종합하여 CDD 엑셀을 생성합니다
+- bizno 정보 + User ID + 다운로드 상태 + **등기부등본 PDF 내용**을 종합하여 CDD 엑셀을 생성합니다
+- PDF가 존재하는 건은 `cdd_extract.py`를 통해 주소, 사업목적, 임원, 자본금, 주식 정보를 자동 추출합니다
 - 결과: `output/CDD_고객정보.xlsx`
+
+#### PDF 내용 추출 (`cdd_extract.py`)
+
+`cdd_generate.py`가 자동으로 호출하지만, 단독 실행도 가능합니다:
+
+```bash
+python3 cdd_extract.py [config.json]
+```
+
+**사전 요구사항**: `pdftotext` (poppler)
+
+```bash
+# macOS
+brew install poppler
+
+# Ubuntu/Debian
+sudo apt install poppler-utils
+```
+
+추출 항목:
+| 컬럼 | 내용 |
+|------|------|
+| I. 등기_주소 | 등기부등본 본점 주소 (최신) |
+| J. 등기_목적 | 사업목적 (목적 섹션 전체) |
+| K. 등기_자본금 | 자본금 변경 전(전)/후(후) |
+| L. 등기_발행주식 | 발행할 주식의 총수 전/후 |
+| N. 등기_임원 | 현직 대표이사/임원 |
+| O. 등기_비고 | 발행주식 상세 (종류별 수량) |
+
+주식 변경 이력 추적 (전/후):
+- **발행할 주식의 총수**: 인가된 최대 주식 수의 변경 이력 (전 = 직전, 후 = 현재)
+- **발행주식 상세**: 보통주, 전환상환우선주, 전환우선주 등 종류별 수량 및 자본금 변경 이력
+- 등기부등본에 이력이 연대순으로 기재되며, 말소(취소선)는 자동으로 최신 2개 항목의 전/후로 판별합니다
+
+**설정 항목** (`config.json`):
+| 키 | 설명 | 기본값 |
+|----|------|--------|
+| `pdf_dir` | 등기부등본 PDF 저장 경로 | `~/Downloads/등기부등본` |
+| `extract_output` | 추출 결과 JSON 저장 경로 | `./output/cdd_extract_results.json` |
 
 ---
 
@@ -348,7 +388,8 @@ iros-cdd-automation/
 ├── iros_cart.py                 # Step 2A: 장바구니 (상호명 기반)
 ├── iros_cart_by_corpnum.py      # Step 2B: 장바구니 (법인등록번호 기반)
 ├── iros_download.py             # Step 4: 열람/저장 자동화
-├── cdd_generate.py              # Step 5: CDD 엑셀 생성
+├── cdd_extract.py               # Step 5A: 등기부등본 PDF 내용 추출
+├── cdd_generate.py              # Step 5B: CDD 엑셀 생성
 ├── data/                        # 데이터 (gitignore)
 │   ├── bizno_cache.json         # 조회 캐시
 │   ├── bizno_results.json       # bizno 조회 결과
