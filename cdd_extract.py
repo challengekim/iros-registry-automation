@@ -348,9 +348,12 @@ def parse_authorized_shares(text: str) -> dict:
         }
         항목이 1개뿐이면 전은 빈 dict.
     """
-    # 섹션 경계: 발행할 주식의 총수 ~ 발행주식의 총수와 or 1주의 금액
+    # 섹션: "발행할 주식의 총수" 헤더 줄 ~ "발행주식의 총수와" 또는 "1주의 금액" 전까지
+    # pdftotext -layout 출력에서 첫 값이 헤더와 같은 줄에 나옴:
+    #   발행할 주식의 총수        100 주
+    #                      1,000,000 주
     section_match = re.search(
-        r'발행할\s*주식의\s*총수\s*\n(.*?)(?=발행주식의\s*총수와|1주의\s*금액|목\s+적)',
+        r'(발행할\s*주식의\s*총수\s+[\d,]+\s*주.*?)(?=발행주식의\s*총수와|1주의\s*금액|목\s+적)',
         text, re.DOTALL
     )
     if not section_match:
@@ -358,30 +361,33 @@ def parse_authorized_shares(text: str) -> dict:
 
     section = section_match.group(1)
 
-    # 각 항목: 숫자(콤마 포함) + "주" + 날짜
-    # 패턴 예: "39,000 주" 와 "2017.08.24 변경"이 근처에 있음
+    # 주식수를 포함하는 모든 줄에서 값 추출 (같은 줄에 날짜가 있을 수 있음)
     entries = []
-
-    # 줄 단위로 처리: 주식수 줄 다음에 날짜 줄이 따라오는 구조
-    lines = [l.strip() for l in section.split('\n') if l.strip()]
-
-    share_re = re.compile(r'^([\d,]+)\s*주\s*$')
+    share_re = re.compile(r'([\d,]+)\s*주')
     date_re = re.compile(r'(\d{4}\.\d{2}\.\d{2})\s*(?:변경|등기|경정)?')
 
-    i = 0
-    while i < len(lines):
-        sm = share_re.match(lines[i])
-        if sm:
-            share_val = sm.group(1)
-            # 날짜를 다음 몇 줄 안에서 찾음
-            date_val = ""
+    lines = section.split('\n')
+    for i, line in enumerate(lines):
+        sm = share_re.search(line)
+        if not sm:
+            continue
+        # "발행가능한 주식수" 등 본문 텍스트 제외 — 한글이 많은 줄은 데이터가 아님
+        hangul_count = len(re.findall(r'[가-힣]', line))
+        if hangul_count > 15:
+            continue
+        share_val = sm.group(1)
+        # 같은 줄 또는 다음 몇 줄에서 날짜 찾기
+        date_val = ""
+        dm = date_re.search(line)
+        if dm:
+            date_val = dm.group(1)
+        else:
             for j in range(i + 1, min(i + 5, len(lines))):
-                dm = date_re.search(lines[j])
-                if dm:
-                    date_val = dm.group(1)
+                dm2 = date_re.search(lines[j])
+                if dm2:
+                    date_val = dm2.group(1)
                     break
-            entries.append({"총수": share_val, "date": date_val})
-        i += 1
+        entries.append({"총수": share_val, "date": date_val})
 
     if not entries:
         return {"전": {}, "후": {}}
@@ -416,9 +422,10 @@ def parse_issued_shares(text: str) -> dict:
             "후": { ... }
         }
     """
-    # 섹션 경계
+    # 섹션 경계: "발행주식의 총수와" 헤더 ~ "목 적" 전까지
+    # pdftotext에서 "그 종류 및 각각의 수"가 다음 줄에 나올 수 있음
     section_match = re.search(
-        r'발행주식의\s*총수와\s*그\s*종류\s*(.*?)(?=목\s+적)',
+        r'발행주식의\s*총수와\s*(.*?)(?=\n\s*목\s+적)',
         text, re.DOTALL
     )
     if not section_match:
@@ -448,11 +455,13 @@ def parse_issued_shares(text: str) -> dict:
         for stm in stock_type_re.finditer(block):
             entry[stm.group(1)] = stm.group(2) + " 주"
 
-        # 자본금의 액
-        capital_re = re.compile(r'자본금의\s*액\s+(금\s*[\d,]+\s*원)')
-        cm = capital_re.search(block)
-        if cm:
-            entry["자본금"] = re.sub(r'\s+', ' ', cm.group(1)).strip()
+        # 자본금의 액: "자본금의 액" 헤더는 별도 줄이고, "금 N 원"은 데이터 줄에 있음
+        # pdftotext에서 "금 10,000,000 원"이 주식 종류와 같은 줄에 나옴
+        capital_re = re.compile(r'금\s*([\d,]+)\s*원')
+        capital_matches = capital_re.findall(block)
+        if capital_matches:
+            # 마지막 자본금 값 사용 (블록 내 가장 아래 것이 최종)
+            entry["자본금"] = f"금 {capital_matches[-1]} 원"
 
         # 날짜
         date_re = re.compile(r'(\d{4}\.\d{2}\.\d{2})\s*(?:변경|등기|경정)?')
