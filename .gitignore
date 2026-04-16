@@ -3,7 +3,8 @@
 __pycache__/
 *.pyc
 .env
-config.json
+
+# PII / sensitive data directories — never commit customer data
 data/
 output/
 logs/
