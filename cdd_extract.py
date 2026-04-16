@@ -29,11 +29,8 @@ def load_config(path="config.json"):
 
 def _check_tool(name: str) -> bool:
     """CLI 도구가 설치되어 있는지 확인."""
-    try:
-        subprocess.run([name, "--version"], capture_output=True, timeout=5)
-        return True
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return False
+    import shutil
+    return shutil.which(name) is not None
 
 
 def _ocr_with_tesseract(pdf_path: str) -> str:
@@ -63,6 +60,7 @@ def _ocr_with_tesseract(pdf_path: str) -> str:
     for img in images:
         text = pytesseract.image_to_string(img, lang="kor+eng")
         texts.append(text)
+        img.close()
     return "\n".join(texts)
 
 
@@ -101,7 +99,7 @@ def extract_text(pdf_path: str) -> str:
         pass
 
     # pdftotext 결과가 비어있으면 Tesseract OCR fallback
-    if not text or len(text) < 50:
+    if not text or len(text) < 10:
         print(f"  [OCR] pdftotext 결과 없음, Tesseract OCR 시도: {os.path.basename(pdf_path)}")
         text = _ocr_with_tesseract(pdf_path)
 
