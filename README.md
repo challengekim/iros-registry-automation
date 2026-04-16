@@ -10,13 +10,13 @@
 
 ## 장바구니 검색 방식 비교
 
-| 항목 | 상호명 기반 (`iros_cart.py`) | 법인등록번호 기반 (`iros_cart_by_corpnum.py`) |
+| 항목 | 법인등록번호 기반 (`iros_cart_by_corpnum.py`) | 상호명 기반 (`iros_cart.py`) |
 |------|------|------|
-| 검색 키 | 회사명 (예: "스마트솔루션") | 법인등록번호 13자리 (예: "110111-1234567") |
-| 입력 파일 | JSON 배열 `["회사A", "회사B"]` | JSON 객체 `{"번호": "회사명"}` |
-| 장점 | 회사명만 있으면 됨 | 정확한 검색, 동명이인 없음 |
-| 단점 | 사명변경/특수문자 시 검색 실패 가능 | 법인등록번호를 미리 알아야 함 |
-| 권장 상황 | 법인등록번호를 모를 때 | 법인등록번호를 알 때 (기본 권장) |
+| 검색 키 | 법인등록번호 13자리 (예: "110111-1234567") | 회사명 (예: "스마트솔루션") |
+| 입력 파일 | JSON 객체 `{"번호": "회사명"}` | JSON 배열 `["회사A", "회사B"]` |
+| 장점 | 정확한 검색, 동명이인 없음 | 회사명만 있으면 됨 |
+| 단점 | 법인등록번호를 미리 알아야 함 | 사명변경/특수문자 시 검색 실패 가능 |
+| 권장 상황 | 법인등록번호를 알 때 (기본 권장) | 법인등록번호를 모를 때 |
 
 > **추천**: 법인등록번호 기반으로 먼저 처리 (정확도 높음) → 법인등록번호를 모르는 건만 상호명 기반으로 검색
 
@@ -77,11 +77,89 @@ python3 bizno_scrape.py config.json
 
 ### Step 2: IROS 장바구니 담기 (자동화)
 
-두 가지 방식 중 선택하여 사용합니다.
+두 가지 방식이 있으며, **법인등록번호 기반을 먼저 사용**하는 것을 권장합니다.
 
-#### 방법 A: 상호명 기반 검색 (iros_cart.py)
+#### 방법 A: 법인등록번호 기반 검색 (iros_cart_by_corpnum.py) — 기본 권장
 
-회사명으로 IROS를 검색하여 장바구니에 담습니다. 대부분의 경우 이 방식을 먼저 사용합니다.
+법인등록번호(13자리)로 IROS를 검색합니다. 정확도가 높아 사명변경, 동명이인 문제가 없습니다.
+
+**입력 파일 형식** (`data/iros_corpnums.json`):
+```json
+{
+  "110111-1234567": "스마트솔루션",
+  "134511-0012345": "디지털마케팅코리아",
+  "110111-9876543": "클라우드서비스"
+}
+```
+
+> 키: 법인등록번호 (하이픈 있어도/없어도 OK, 자동 제거됨)
+> 값: 회사명 (로그 식별용, 검색에는 사용 안 함)
+
+**입력 파일 만드는 방법**:
+
+bizno_scrape.py 결과(`data/bizno_results.json`)에서 법인등록번호가 있는 건을 추출합니다:
+
+```python
+import json
+
+with open("data/bizno_results.json") as f:
+    data = json.load(f)
+
+# 법인등록번호가 있는 전체 건 추출
+corpnums = {}
+for item in data:
+    name = item.get("company_name", "")
+    corp_reg = item.get("corp_reg_number", "")
+    if corp_reg:
+        corpnums[corp_reg] = name
+
+with open("data/iros_corpnums.json", "w") as f:
+    json.dump(corpnums, f, ensure_ascii=False, indent=2)
+
+print(f"법인등록번호 {len(corpnums)}건 추출")
+```
+
+**실행**:
+```bash
+# 기본 설정으로 실행
+python3 iros_cart_by_corpnum.py
+
+# 설정 파일 지정
+python3 iros_cart_by_corpnum.py config.json
+```
+
+**실행 과정**:
+1. 터미널에서 스크립트 실행
+2. 브라우저가 자동으로 열림
+3. iros.go.kr에 **수동 로그인** (공인인증서/간편인증)
+4. 로그인 완료 후 터미널에서 **Enter** 입력
+5. 자동 처리 시작:
+   - "등록번호검색" 탭으로 전환
+   - 법인등록번호 입력 (13자리, 하이픈 자동 제거)
+   - 검색 결과 선택
+   - 법인등기부등본(말소사항포함) 체크
+   - 장바구니에 추가
+   - 다음 건으로 반복
+
+**터미널 출력 예시**:
+```
+총 220개, 이미처리 0개, 남은 220개
+
+[1/220] 110111-1234567 (스마트솔루션) ✓ cart:1 (total:1)
+[2/220] 134511-0012345 (디지털마케팅코리아) ✓ cart:2 (total:2)
+[3/220] 110111-9876543 (클라우드서비스) - skip
+```
+
+**상태 설명**:
+- `✓ cart:N` — 성공. N은 현재 장바구니 항목 수
+- `- skip` — 검색결과 없음 (등록번호 오류 등)
+- `✗ error:...` — 실패. 네트워크 오류 또는 로그인 세션 만료
+
+**로그 파일**: `logs/cart_corpnum_log.json`
+
+#### 방법 B: 상호명 기반 검색 (iros_cart.py) — 법인등록번호를 모를 때
+
+회사명으로 IROS를 검색하여 장바구니에 담습니다. 법인등록번호가 없는 건에 대해 사용합니다.
 
 **입력 파일 형식** (`data/iros_companies.json`):
 ```json
@@ -92,7 +170,7 @@ python3 bizno_scrape.py config.json
 ]
 ```
 
-> Step 1 (bizno_scrape.py) 실행 시 자동 생성됩니다.
+> Step 1 (bizno_scrape.py) 실행 시 자동 생성됩니다. 법인등록번호 기반 처리 후 skip/fail 건만 별도로 추출하여 사용할 수도 있습니다.
 
 **실행**:
 ```bash
@@ -117,12 +195,12 @@ python3 iros_cart.py config.json 50
 
 **터미널 출력 예시**:
 ```
-총 220개, 이미처리 0개, index 0부터 시작
+총 15개, 이미처리 0개, index 0부터 시작
 
-[1/220] 스마트솔루션 ✓ cart:10 (total:1)
-[2/220] 디지털마케팅 ✓ cart:11 (total:2)
-[3/220] 클라우드서비스 - skip
-[4/220] 웹에이전시 ✓ cart:12 (total:3)
+[1/15] 스마트솔루션 ✓ cart:221 (total:1)
+[2/15] 디지털마케팅 ✓ cart:222 (total:2)
+[3/15] 클라우드서비스 - skip
+[4/15] 웹에이전시 ✓ cart:223 (total:3)
 
   >> 완료:3 실패:0 건너뜀:1
 ```
@@ -133,95 +211,8 @@ python3 iros_cart.py config.json 50
 - `✗ error:...` — 실패. 네트워크 오류 또는 로그인 세션 만료
 
 **로그 파일**: `logs/cart_log.json`
-```json
-{
-  "completed": ["스마트솔루션", "디지털마케팅"],
-  "failed": [{"name": "실패회사", "error": "error:timeout", "time": "2026-04-09T12:34:56"}],
-  "skipped": ["검색안되는회사"]
-}
-```
 
-#### 방법 B: 법인등록번호 기반 검색 (iros_cart_by_corpnum.py)
-
-법인등록번호(13자리)로 IROS를 검색합니다. 상호명 검색이 실패한 건을 정확하게 재시도할 때 사용합니다.
-
-**입력 파일 형식** (`data/iros_corpnums.json`):
-```json
-{
-  "110111-1234567": "스마트솔루션",
-  "134511-0012345": "디지털마케팅코리아",
-  "110111-9876543": "클라우드서비스"
-}
-```
-
-> 키: 법인등록번호 (하이픈 있어도/없어도 OK, 자동 제거됨)
-> 값: 회사명 (로그 식별용, 검색에는 사용 안 함)
-
-**입력 파일 만드는 방법**:
-
-bizno_scrape.py 결과(`data/bizno_results.json`)에서 법인등록번호가 있는 건을 추출합니다:
-
-```python
-import json
-
-with open("data/bizno_results.json") as f:
-    data = json.load(f)
-
-# 상호명 검색 실패 목록 (skip/fail 건)
-with open("logs/cart_log.json") as f:
-    cart_log = json.load(f)
-
-failed_names = set(cart_log.get("skipped", []))
-failed_names.update(item["name"] if isinstance(item, dict) else item for item in cart_log.get("failed", []))
-
-# 법인등록번호 매핑 생성
-corpnums = {}
-for item in data:
-    name = item.get("company_name", "")
-    corp_reg = item.get("corp_reg_number", "")
-    if corp_reg and name in failed_names:
-        corpnums[corp_reg] = name
-
-with open("data/iros_corpnums.json", "w") as f:
-    json.dump(corpnums, f, ensure_ascii=False, indent=2)
-
-print(f"법인등록번호 {len(corpnums)}건 추출")
-```
-
-**실행**:
-```bash
-# 기본 설정으로 실행
-python3 iros_cart_by_corpnum.py
-
-# 설정 파일 지정
-python3 iros_cart_by_corpnum.py config.json
-```
-
-**실행 과정**:
-1. 터미널에서 스크립트 실행
-2. 브라우저가 자동으로 열림
-3. iros.go.kr에 **수동 로그인**
-4. 로그인 완료 후 터미널에서 **Enter** 입력
-5. 자동 처리 시작:
-   - "등록번호검색" 탭으로 전환
-   - 법인등록번호 입력 (13자리, 하이픈 자동 제거)
-   - 검색 결과 선택
-   - 법인등기부등본(말소사항포함) 체크
-   - 장바구니에 추가
-   - 다음 건으로 반복
-
-**터미널 출력 예시**:
-```
-총 15개, 이미처리 0개, 남은 15개
-
-[1/15] 110111-1234567 (스마트솔루션) ✓ cart:221 (total:1)
-[2/15] 134511-0012345 (디지털마케팅코리아) ✓ cart:222 (total:2)
-[3/15] 110111-9876543 (클라우드서비스) - skip
-```
-
-**로그 파일**: `logs/cart_corpnum_log.json`
-
-> **팁**: 상호명 기반에서 이미 장바구니에 담긴 건수 위에 추가되므로, cart 숫자가 이전 결과에서 이어집니다.
+> **팁**: 법인등록번호 기반에서 이미 장바구니에 담긴 건수 위에 추가되므로, cart 숫자가 이전 결과에서 이어집니다.
 
 ---
 
@@ -351,11 +342,11 @@ sudo apt install tesseract-ocr tesseract-ocr-kor
 모든 스크립트는 로그 파일에 진행 상황을 저장하므로, 중단 후 재실행하면 이미 처리된 건은 자동으로 건너뜁니다.
 
 ```bash
-# 상호명 기반 — 50번 인덱스부터 재개
-python3 iros_cart.py config.json 50
-
 # 법인등록번호 기반 — 자동으로 미처리 건만 실행
 python3 iros_cart_by_corpnum.py
+
+# 상호명 기반 — 50번 인덱스부터 재개
+python3 iros_cart.py config.json 50
 
 # 다운로드 — 이미 받은 파일은 건너뜀
 python3 iros_download.py 220
@@ -368,11 +359,11 @@ python3 iros_download.py 220
 처음부터 다시 실행하려면:
 
 ```bash
-# 상호명 기반 로그 초기화
-echo '{"completed":[],"failed":[],"skipped":[]}' > logs/cart_log.json
-
 # 법인등록번호 기반 로그 초기화
 echo '{"completed":[],"failed":[],"skipped":[]}' > logs/cart_corpnum_log.json
+
+# 상호명 기반 로그 초기화
+echo '{"completed":[],"failed":[],"skipped":[]}' > logs/cart_log.json
 
 # 다운로드 로그 초기화
 echo '{"completed":[],"failed":[],"skipped":[]}' > logs/download_log.json
@@ -410,8 +401,8 @@ iros-cdd-automation/
 ├── config.json.example          # 설정 예시
 ├── requirements.txt             # Python 패키지
 ├── bizno_scrape.py              # Step 1: bizno.net 조회
-├── iros_cart.py                 # Step 2A: 장바구니 (상호명 기반)
-├── iros_cart_by_corpnum.py      # Step 2B: 장바구니 (법인등록번호 기반)
+├── iros_cart_by_corpnum.py      # Step 2A: 장바구니 (법인등록번호 기반, 기본 권장)
+├── iros_cart.py                 # Step 2B: 장바구니 (상호명 기반, fallback)
 ├── iros_download.py             # Step 4: 열람/저장 자동화
 ├── cdd_extract.py               # Step 5A: 등기부등본 PDF 내용 추출
 ├── cdd_generate.py              # Step 5B: CDD 엑셀 생성
