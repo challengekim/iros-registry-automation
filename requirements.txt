@@ -2,3 +2,5 @@ playwright
 openpyxl
 requests
 beautifulsoup4
+pytesseract
+pdf2image

@@ -288,15 +288,40 @@ python3 cdd_generate.py config.json
 python3 cdd_extract.py [config.json]
 ```
 
-**사전 요구사항**: `pdftotext` (poppler)
+**사전 요구사항**: `pdftotext` (poppler) + 선택적으로 Tesseract OCR
 
 ```bash
 # macOS
 brew install poppler
+# OCR fallback이 필요한 경우 (이미지 스캔 PDF)
+brew install tesseract tesseract-lang
 
 # Ubuntu/Debian
 sudo apt install poppler-utils
+# OCR fallback이 필요한 경우
+sudo apt install tesseract-ocr tesseract-ocr-kor
 ```
+
+> **⚠️ 이미지 스캔 PDF 주의사항**
+>
+> 인터넷등기소(IROS)에서 직접 다운로드한 등기부등본 PDF는 **텍스트 기반**이므로 `pdftotext`만으로 추출됩니다.
+> 하지만 **스캐너로 스캔한 이미지 PDF**나 다른 경로로 받은 PDF는 텍스트가 포함되어 있지 않아 `pdftotext`로 추출이 불가능합니다.
+>
+> 이런 경우 자동으로 **Tesseract OCR fallback**이 작동합니다:
+> 1. `pdftotext`로 텍스트 추출 시도
+> 2. 결과가 비어있으면 → Tesseract OCR로 자동 전환
+> 3. PDF를 이미지로 변환 (300 DPI) → 한국어+영어 OCR 수행
+>
+> Tesseract OCR을 사용하려면 추가 설치가 필요합니다:
+> ```bash
+> pip install pytesseract pdf2image
+> brew install tesseract tesseract-lang   # macOS
+> # 또는
+> sudo apt install tesseract-ocr tesseract-ocr-kor  # Ubuntu
+> ```
+>
+> **참고**: Tesseract OCR은 무료 오픈소스이지만, 스캔 품질에 따라 인식률이 달라질 수 있습니다.
+> 더 정확한 OCR이 필요하면 Google Gemini API를 사용하는 방법도 있습니다 (별도 API 키 필요).
 
 추출 항목:
 | 컬럼 | 내용 |

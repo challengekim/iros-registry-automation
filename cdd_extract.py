@@ -27,16 +27,45 @@ def load_config(path="config.json"):
 
 # ─── Step 1: PDF 텍스트 추출 ─────────────────────────────────────
 
-def extract_text(pdf_path: str) -> str:
-    """pdftotext -layout 을 사용하여 PDF 텍스트 추출."""
-    result = subprocess.run(
-        ["pdftotext", "-layout", pdf_path, "-"],
-        capture_output=True, text=True, timeout=30
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"pdftotext failed: {result.stderr}")
+def _check_tool(name: str) -> bool:
+    """CLI 도구가 설치되어 있는지 확인."""
+    import shutil
+    return shutil.which(name) is not None
 
-    text = result.stdout
+
+def _ocr_with_tesseract(pdf_path: str) -> str:
+    """Tesseract OCR을 사용하여 이미지 PDF에서 텍스트 추출.
+    pdf2image로 PDF를 이미지로 변환한 뒤 pytesseract로 OCR 수행.
+    """
+    try:
+        from pdf2image import convert_from_path
+        import pytesseract
+    except ImportError:
+        raise RuntimeError(
+            "Tesseract OCR fallback에 필요한 패키지가 없습니다.\n"
+            "  pip install pytesseract pdf2image\n"
+            "  brew install tesseract tesseract-lang poppler  # macOS\n"
+            "  sudo apt install tesseract-ocr tesseract-ocr-kor poppler-utils  # Ubuntu"
+        )
+
+    if not _check_tool("tesseract"):
+        raise RuntimeError(
+            "tesseract가 설치되어 있지 않습니다.\n"
+            "  brew install tesseract tesseract-lang  # macOS\n"
+            "  sudo apt install tesseract-ocr tesseract-ocr-kor  # Ubuntu"
+        )
+
+    images = convert_from_path(pdf_path, dpi=300)
+    texts = []
+    for img in images:
+        text = pytesseract.image_to_string(img, lang="kor+eng")
+        texts.append(text)
+        img.close()
+    return "\n".join(texts)
+
+
+def _clean_extracted_text(text: str) -> str:
+    """추출된 텍스트 후처리 (pdftotext / Tesseract 공통)."""
     # 열람일시 푸터 제거
     text = re.sub(r'열람일시\s*:.*?\d+/\d+', '', text)
     # 중복 페이지 헤더 제거 (등기번호 N)
@@ -51,6 +80,30 @@ def extract_text(pdf_path: str) -> str:
         else:
             cleaned.append(line)
     return '\n'.join(cleaned)
+
+
+def extract_text(pdf_path: str) -> str:
+    """PDF 텍스트 추출. pdftotext를 먼저 시도하고, 실패하거나 빈 결과이면
+    Tesseract OCR로 fallback합니다."""
+    text = ""
+
+    # 1차: pdftotext -layout
+    try:
+        result = subprocess.run(
+            ["pdftotext", "-layout", pdf_path, "-"],
+            capture_output=True, text=True, timeout=30
+        )
+        if result.returncode == 0:
+            text = result.stdout.strip()
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+
+    # pdftotext 결과가 비어있으면 Tesseract OCR fallback
+    if not text or len(text) < 10:
+        print(f"  [OCR] pdftotext 결과 없음, Tesseract OCR 시도: {os.path.basename(pdf_path)}")
+        text = _ocr_with_tesseract(pdf_path)
+
+    return _clean_extracted_text(text)
 
 
 # ─── Step 2: 필드 파싱 ──────────────────────────────────────────
