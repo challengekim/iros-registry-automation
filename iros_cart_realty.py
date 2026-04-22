@@ -47,6 +47,11 @@ BTN_NEXT = 'mf_wfm_potal_main_wfm_content_btn_next'
 # 결제대상 단계 (= 장바구니 담기 완료)
 BTN_PAY = 'mf_wfm_potal_main_wfm_content_btn_bpay'
 
+# 옵션 라디오 (기본값이지만 명시 선택으로 안전성 확보)
+RAD_USG_VIEW = 'mf_wfm_potal_main_wfm_content_rad_usg_cls_input_0'        # 용도: 열람
+RAD_REC_ALL  = 'mf_wfm_potal_main_wfm_content_rad_rgs_rec_view_cls_cd_input_0'  # 등기기록유형: 전부
+RAD_NO_PUBLC = 'mf_wfm_potal_main_wfm_content_rad_enr_no_publc_yn_input_0'      # 공개여부: 미공개
+
 
 # ─── 유틸 ─────────────────────────────────────────────────────
 
@@ -70,15 +75,12 @@ def save_log(log, path):
 
 
 def build_query(item):
-    """입력 1건에서 검색 쿼리 생성: address + unit (있으면), 없으면 building_name."""
+    """입력 1건에서 검색 쿼리 생성: address + unit + building_name (있는 것 모두 합침)."""
     addr = (item.get("address") or "").strip()
     unit = (item.get("unit") or "").strip()
     building = (item.get("building_name") or "").strip()
-    if addr and unit:
-        return f"{addr} {unit}"
-    if addr and building:
-        return f"{addr} {building}"
-    return addr
+    parts = [p for p in (addr, unit, building) if p]
+    return " ".join(parts)
 
 
 def detect_security_install(page):
@@ -180,7 +182,7 @@ def goto_realty_search(page):
     dismiss(page)
 
 
-def process(page, item, is_first):
+def process(page, item):
     """부동산 1건 처리. 반환값: 'completed:<count>' | 'skipped:<reason>' | 'error:<msg>' | 'abort_security'."""
     query = build_query(item)
     if not query:
@@ -189,11 +191,7 @@ def process(page, item, is_first):
     # address만 있고 unit/building이 둘 다 없으면 다건 팝업 확률이 높지만, 일단 시도
     try:
         # 메뉴 클릭 → 검색 화면 초기 진입
-        if is_first:
-            goto_realty_search(page)
-        else:
-            # 2건 이후에도 메뉴 다시 눌러서 상태 초기화
-            goto_realty_search(page)
+        goto_realty_search(page)
 
         if detect_security_install(page):
             return "abort_security"
@@ -288,6 +286,22 @@ def process(page, item, is_first):
                 page.wait_for_timeout(300)
                 continue
 
+            # 옵션 페이지 (용도/등기기록유형/공개여부) — 기본값이지만 명시 클릭
+            has_opt = page.evaluate(f"""() => {{
+                return !!document.getElementById('{RAD_USG_VIEW}')
+                    || !!document.getElementById('{RAD_REC_ALL}')
+                    || !!document.getElementById('{RAD_NO_PUBLC}');
+            }}""")
+            if has_opt:
+                page.evaluate(f"""() => {{
+                    for (const id of ['{RAD_USG_VIEW}', '{RAD_REC_ALL}', '{RAD_NO_PUBLC}']) {{
+                        const r = document.getElementById(id);
+                        if (r && !r.checked) r.click();
+                    }}
+                }}""")
+                page.wait_for_timeout(400)
+                continue
+
             if not state.get("hasNext"):
                 # 다음 버튼이 없는데 결제 버튼도 없음 — 예상 외 상태
                 page.wait_for_timeout(1000)
@@ -349,7 +363,6 @@ def main():
         print("=" * 50)
         input(">>> ")
 
-        is_first = True
         ok = fail = skip = 0
         aborted = False
 
@@ -362,7 +375,7 @@ def main():
                 continue
 
             print(f"[{i+1}/{len(realties)}] {label} ({build_query(item)[:40]})", end=" ")
-            status = process(page, item, is_first)
+            status = process(page, item)
 
             # 보안 프로그램 미설치 — 즉시 중단
             if status == "abort_security":
@@ -381,7 +394,7 @@ def main():
                     goto_realty_search(page)
                 except Exception:
                     pass
-                status = process(page, item, True)
+                status = process(page, item)
                 if status == "abort_security":
                     print("\n  [중단] 재시도 중 보안 프로그램 설치 페이지 감지")
                     aborted = True
@@ -389,7 +402,6 @@ def main():
 
             if status.startswith("completed"):
                 log["completed"].append(label)
-                is_first = False
                 ok += 1
                 cart = status.split(":")[1] if ":" in status else "?"
                 print(f"✓ cart:{cart} (total:{ok})")
@@ -401,7 +413,6 @@ def main():
                 if reason == "too_many_results":
                     hint = " (입력 구체화 필요: 동/호수/건물명 추가)"
                 print(f"- skip:{reason}{hint}")
-                is_first = True
             else:
                 log["failed"].append({
                     "label": label,
@@ -409,7 +420,6 @@ def main():
                     "error": status,
                     "time": datetime.now().isoformat(),
                 })
-                is_first = True
                 fail += 1
                 print(f"✗ {status}")
 
@@ -429,8 +439,27 @@ def main():
             browser.close()
             return
 
-        print("\n  결제대상목록 페이지로 이동해주세요 (상단 메뉴 또는 결제대상목록 버튼).")
-        print("  결제는 한 번에 최대 10건씩 수동으로 진행합니다.")
+        print("\n  결제대상목록 페이지로 이동합니다...")
+        try:
+            page.evaluate(
+                f"document.getElementById('{BTN_MENU_REALTY_VIEW}') && "
+                f"document.getElementById('{BTN_MENU_REALTY_VIEW}').click()"
+            )
+            page.wait_for_timeout(2000)
+            dismiss(page)
+            page.wait_for_timeout(1000)
+            page.evaluate(
+                "document.getElementById('mf_wfm_potal_main_wfm_content_btn_pay_list') && "
+                "document.getElementById('mf_wfm_potal_main_wfm_content_btn_pay_list').click()"
+            )
+            page.wait_for_timeout(3000)
+            count = page.evaluate("""() => {
+                const m = document.body.innerText.match(/전체\\s*(\\d+)\\s*건/);
+                return m ? m[1] : '확인불가';
+            }""")
+            print(f"  ★ 결제대상: {count}건 - 10건씩 결제해주세요!")
+        except Exception:
+            print("  결제대상 페이지 이동 실패 - 상단 메뉴에서 직접 이동해주세요")
         input(">>> 결제 완료 후 Enter (브라우저 닫힘) ")
         browser.close()
 
