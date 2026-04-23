@@ -1,13 +1,20 @@
 #!/usr/bin/env python3
 """인터넷등기소 부동산등기부등본 일괄열람출력 자동화
 결제 완료된 부동산등기부등본을 페이지 단위로 일괄열람출력합니다.
-한 페이지의 모든 항목을 선택 후 일괄열람출력 버튼으로 PDF 1개로 저장.
+
+플로우:
+ 1) 신청결과 페이지에서 헤더 체크박스로 페이지 전체 선택
+ 2) 하단 [일괄열람출력] 클릭 → '일괄 열람 출력 대상 부동산 목록' 페이지로 전환
+ 3) 전환된 페이지 하단의 [일괄저장] 클릭 → 건별 PDF 다수 다운로드
+ 4) 다운로드 완료 후 신청결과 페이지로 복귀 → 다음 페이지 반복
+
 Usage: python3 iros_download_realty.py [config.json] [max_batches]
 
 주의:
 - TouchEn nxKey 보안 프로그램 사전 설치 필수.
 - 로그인은 수동. 로그인 후 Enter 입력.
-- 일괄 PDF는 건별 파일명 매칭이 불가합니다. 내용으로 식별해주세요.
+- 일괄저장은 건별 파일로 저장되지만 원본 파일명은 IROS 내부 값이라
+  정확한 상호/주소 매칭이 어렵습니다. 필요 시 내용으로 식별하세요.
 """
 import json, sys, os, re, time, shutil
 from datetime import datetime
@@ -161,6 +168,49 @@ def click_bulk_view(page) -> bool:
     return bool(result)
 
 
+def click_bulk_save(page) -> bool:
+    """일괄 열람 출력 대상 페이지에서 '일괄저장' 버튼 클릭."""
+    result = page.evaluate("""() => {
+        // 일괄 열람 출력 대상 부동산 목록 페이지 하단 버튼
+        const candidates = [
+            ...document.querySelectorAll('button'),
+            ...document.querySelectorAll('input[type="button"]'),
+            ...document.querySelectorAll('input[type="submit"]'),
+            ...document.querySelectorAll('a'),
+        ];
+        for (const el of candidates) {
+            const text = (el.textContent || el.value || '').trim();
+            if (text === '일괄저장' && el.offsetParent !== null) {
+                el.click();
+                return true;
+            }
+        }
+        return false;
+    }""")
+    return bool(result)
+
+
+def wait_for_new_files(before_files, dl_dir, timeout=90, settle=5):
+    """여러 파일 다운로드 완료 대기. 새 파일 목록 반환."""
+    collected = set()
+    no_new_streak = 0
+    for _ in range(timeout):
+        time.sleep(1)
+        current = snapshot_files(dl_dir)
+        new_files = {
+            f for f in (current - before_files)
+            if not os.path.basename(f).endswith('.crdownload')
+        }
+        if new_files - collected:
+            collected |= new_files
+            no_new_streak = 0
+        elif collected:
+            no_new_streak += 1
+            if no_new_streak >= settle:
+                return sorted(collected)
+    return sorted(collected)
+
+
 def has_pending_rows(page) -> int:
     """현재 페이지에 미열람 상태 행 개수."""
     count = page.evaluate("""() => {
@@ -240,42 +290,69 @@ def process_batch(page, dl_dir, save_dir, batch_idx) -> str:
         return 'no_button'
     print("(일괄열람출력클릭)", end=" ", flush=True)
 
-    # 4. 확인 팝업 처리 (변환중 / 저장)
+    # 4. 대상 목록 페이지 전환 대기
     page.wait_for_timeout(3000)
+    dismiss(page)
     confirm_popups(page)
-    page.wait_for_timeout(2000)
+    page.wait_for_timeout(1500)
     confirm_popups(page)
 
-    # 5. 다운로드 대기 (30초)
+    # 5. 일괄저장 클릭 전 파일 스냅샷
     before_files = snapshot_files(dl_dir)
-    dl_file = wait_for_new_file(before_files, dl_dir, timeout=30)
-    if not dl_file:
+
+    # 6. 일괄저장 버튼 클릭
+    if not click_bulk_save(page):
+        print("일괄저장 버튼 없음 X")
+        return 'no_save_button'
+    print("(일괄저장클릭)", end=" ", flush=True)
+
+    # 7. 저장 확인 팝업 처리
+    page.wait_for_timeout(2000)
+    confirm_popups(page)
+    page.wait_for_timeout(1500)
+    confirm_popups(page)
+
+    # 8. 다운로드 완료 대기 (복수 파일)
+    dl_files = wait_for_new_files(before_files, dl_dir, timeout=90, settle=5)
+    if not dl_files:
         print("다운로드안됨 X")
         return 'dl_fail'
 
-    # 6. 확장자 보정
-    if not dl_file.endswith('.pdf'):
-        pdf_file = dl_file + '.pdf'
-        os.rename(dl_file, pdf_file)
-        dl_file = pdf_file
+    # 9. 파일명 변경: realty_bulk_{YYYYMMDD_HHMMSS}_{batch_idx}_{i}.pdf
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    saved_count = 0
+    for i, dl_file in enumerate(dl_files, 1):
+        try:
+            if not dl_file.endswith('.pdf'):
+                try:
+                    os.rename(dl_file, dl_file + '.pdf')
+                    dl_file = dl_file + '.pdf'
+                except Exception:
+                    pass
+            new_name = f"realty_bulk_{ts}_{batch_idx}_{i}.pdf"
+            new_path = os.path.join(save_dir, new_name)
+            if os.path.exists(new_path):
+                new_path = os.path.join(
+                    save_dir,
+                    f"realty_bulk_{ts}_{batch_idx}_{i}_{int(time.time())}.pdf"
+                )
+            shutil.move(dl_file, new_path)
+            saved_count += 1
+        except Exception as e:
+            print(f"(이동실패 {os.path.basename(dl_file)}: {e})", end=" ", flush=True)
+            continue
+    print(f"-> {saved_count}건 저장 OK")
 
-    # PDF 헤더 검증
+    # 10. 신청결과 페이지로 복귀
     try:
-        with open(dl_file, 'rb') as fh:
-            header = fh.read(4)
-        if header != b'%PDF':
-            print("(PDF아님)", end=" ", flush=True)
+        page.evaluate(f"""() => {{
+            const el = document.getElementById('{BTN_MENU_REALTY_APPLY_RESULT}');
+            if (el) el.click();
+        }}""")
+        page.wait_for_timeout(3500)
+        dismiss(page)
     except Exception:
         pass
-
-    # 7. 파일명 변경: realty_bulk_{YYYYMMDD_HHMMSS}_{batch_idx}.pdf
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    new_name = f"realty_bulk_{ts}_{batch_idx}.pdf"
-    new_path = os.path.join(save_dir, new_name)
-    if os.path.exists(new_path):
-        new_path = os.path.join(save_dir, f"realty_bulk_{ts}_{batch_idx}_{int(time.time())}.pdf")
-    shutil.move(dl_file, new_path)
-    print(f"-> {os.path.basename(new_path)} OK")
 
     return 'ok'
 
@@ -364,9 +441,9 @@ def main():
             elif status == 'ok':
                 log["completed"].append({
                     "batch_idx": batch_idx,
-                    "file": f"realty_bulk_{batch_idx}.pdf",
+                    "file_prefix": f"realty_bulk_*_{batch_idx}_*.pdf",
                     "time": datetime.now().isoformat(),
-                    "items_in_batch": "N/A",
+                    "items_in_batch": "multi",
                 })
                 save_log(log, log_path)
                 batch_idx += 1
@@ -409,7 +486,7 @@ def main():
         print(f"  완료! 처리배치:{batch_idx} 실패:{len(log['failed'])}")
         print(f"  저장: {save_dir}")
         print(f"{'='*50}")
-        print("※ 일괄 PDF는 건별 파일명 매칭이 불가합니다. 내용으로 식별해주세요.")
+        print("※ 일괄저장 결과 파일명은 IROS 내부 값 기반입니다. 상호/주소 매칭이 필요하면 내용으로 식별하세요.")
         input(">>> Enter로 브라우저 닫기 ")
         browser.close()
 
