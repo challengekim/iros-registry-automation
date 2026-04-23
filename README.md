@@ -24,6 +24,14 @@ python3 iros_wizard.py
 
 실행하면 메뉴가 뜨고, 원하는 작업(법인/부동산 장바구니·다운로드)을 번호로 고르면 됩니다.
 
+> **명령 입력 주의**: 스크립트는 **반드시 `python3` 접두사와 함께** 실행합니다.
+> `iros_wizard.py`만 입력하면 `command not found` 오류가 납니다. (`.py`는 실행 파일이 아니라 파이썬 스크립트이기 때문)
+> ```bash
+> python3 iros_wizard.py          # O
+> python3 iros_download_realty.py # O
+> iros_wizard.py                  # X  (command not found)
+> ```
+
 ---
 
 ## TouchEn nxKey 사전 설치 (중요)
@@ -222,12 +230,12 @@ Playwright가 Chromium 창을 띄우고 `iros.go.kr` 홈페이지를 엽니다.
 
 ```bash
 python3 iros_wizard.py
-# 체크리스트 Enter → 4 선택 → 받을 건수 Enter(기본 999)
+# 체크리스트 Enter → 2(법인, 받을 건수) 또는 4(부동산, 최대 배치 수) 선택 → Enter
 ```
 
 여기서도 **브라우저 로그인 → 터미널 Enter** 흐름이 똑같이 한 번 반복됩니다. 이후는 자동으로 열람 → 저장 → 파일명 정리:
-- 법인: `~/Downloads/등기부등본/{회사명}.pdf`
-- 부동산: `~/Downloads/부동산등기부등본/realty_{순번}_{고유번호}.pdf`
+- 법인: `~/Downloads/등기부등본/{회사명}.pdf` (건별 저장)
+- 부동산: `~/Downloads/부동산등기부등본/realty_bulk_{YYYYMMDD_HHMMSS}_{배치번호}.pdf` (페이지 단위 일괄 PDF)
 
 ### 언제 터미널 / 언제 브라우저 요약
 
@@ -299,10 +307,12 @@ python3 iros_cart_realty.py [config.json] [시작인덱스]
 ### 부동산 열람·저장
 
 ```bash
-python3 iros_download_realty.py [config.json] [건수]
+python3 iros_download_realty.py [config.json] [max_batches]
 ```
 
-저장: `~/Downloads/부동산등기부등본/realty_{순번}_{원본파일명}.pdf`
+`max_batches` 기본 99. 페이지당 10건 일괄열람출력 → 다음 페이지 순으로 반복합니다.
+저장: `~/Downloads/부동산등기부등본/realty_bulk_{YYYYMMDD_HHMMSS}_{배치번호}.pdf`
+(일괄 PDF는 건별 파일명 매칭이 불가합니다. 내용으로 식별하세요.)
 
 ### bizno 스크래핑 (사업자등록번호 → 법인정보)
 
