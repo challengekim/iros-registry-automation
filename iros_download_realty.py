@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
-"""인터넷등기소 열람+저장+파일명변경 자동화 - 부동산등기부등본
-결제 완료된 부동산등기부등본을 순서대로 열람 → 저장 → 파일명 변경합니다.
-열람 후 항목이 사라지므로 항상 첫 번째 열람 버튼만 클릭합니다.
-Usage: python3 iros_download_realty.py [config.json] [건수]
+"""인터넷등기소 부동산등기부등본 일괄열람출력 자동화
+결제 완료된 부동산등기부등본을 페이지 단위로 일괄열람출력합니다.
+한 페이지의 모든 항목을 선택 후 일괄열람출력 버튼으로 PDF 1개로 저장.
+Usage: python3 iros_download_realty.py [config.json] [max_batches]
 
 주의:
 - TouchEn nxKey 보안 프로그램 사전 설치 필수.
 - 로그인은 수동. 로그인 후 Enter 입력.
-- 파일명은 기본적으로 {index}_{고유번호또는timestamp}.pdf 형식입니다.
-  (법인 다운로드와 달리 상호명 매칭이 없으므로 식별자는 순번/파일 고유번호 기준)
+- 일괄 PDF는 건별 파일명 매칭이 불가합니다. 내용으로 식별해주세요.
 """
 import json, sys, os, re, time, shutil
 from datetime import datetime
@@ -89,68 +88,8 @@ def wait_for_new_file(before_files, dl_dir, timeout=30):
     return None
 
 
-def click_save(page):
-    for sel in [
-        'input[id*="wframe_btn_download"]',
-        'input[value="저장"]',
-    ]:
-        try:
-            page.click(sel, timeout=5000, force=True)
-            return True
-        except Exception:
-            continue
-    return False
-
-
-def close_viewer(page):
-    for sel in [
-        'input[id*="wframe_btn_close"]',
-        'input[value="닫기"]',
-    ]:
-        try:
-            page.click(sel, timeout=3000, force=True)
-            page.wait_for_timeout(1500)
-            return
-        except Exception:
-            continue
-    try:
-        page.keyboard.press('Escape')
-        page.wait_for_timeout(1500)
-    except Exception:
-        pass
-    dismiss(page)
-
-
-def process_one(page, log, dl_dir, save_dir, index):
-    """한 건 처리: 항상 첫 번째 열람 버튼 클릭."""
-    dismiss(page)
-
-    # 1. 첫 번째 열람 버튼 클릭 + 라벨/주소 추출 (tsv에서 중간 칸)
-    result = page.evaluate("""() => {
-        const btns = document.querySelectorAll('button');
-        for (const b of btns) {
-            if (b.offsetParent !== null && b.textContent.trim() === '열람') {
-                const gp = b.parentElement ? b.parentElement.parentElement : null;
-                let summary = '';
-                if (gp) {
-                    const parts = gp.innerText.split('\\t').map(s => s.trim()).filter(Boolean);
-                    summary = parts.slice(0, 6).join(' | ');
-                }
-                b.click();
-                return {clicked: true, summary: summary};
-            }
-        }
-        return {clicked: false, summary: ''};
-    }""")
-
-    if not result.get("clicked"):
-        return ("no_more", "")
-
-    summary = result.get("summary", "")
-    print(f"{summary[:40]}", end=" ", flush=True)
-
-    # 2. 확인 팝업
-    page.wait_for_timeout(3000)
+def confirm_popups(page):
+    """변환중/저장 등 확인 팝업 처리."""
     for sel in [
         'input[id*="btn_confirm2"][value="확인"]',
         'a[id*="btn_confirm2"]',
@@ -159,39 +98,162 @@ def process_one(page, log, dl_dir, save_dir, index):
     ]:
         try:
             page.click(sel, timeout=2000)
-            print("(확인)", end=" ", flush=True)
-            break
+            return True
         except Exception:
             continue
+    return False
 
-    # 3. 문서 로딩 대기
-    page.wait_for_timeout(8000)
 
-    # 4. 저장
-    before_files = snapshot_files(dl_dir)
-    if not click_save(page):
-        print("(저장실패)", end=" ", flush=True)
-        close_viewer(page)
-        return ("save_fail", summary)
-    print("(저장OK)", end=" ", flush=True)
+# ─── 핵심 헬퍼 함수들 ──────────────────────────────────────────
 
-    # 5. 변환 확인 팝업
+def select_all_on_page(page) -> bool:
+    """헤더 체크박스 클릭(이미 체크되어 있으면 skip). 성공 여부 반환."""
+    result = page.evaluate("""() => {
+        // 방법 1: thead 안의 첫 번째 checkbox
+        const theads = document.querySelectorAll('thead');
+        for (const th of theads) {
+            const cb = th.querySelector('input[type="checkbox"]');
+            if (cb && cb.offsetParent !== null) {
+                if (!cb.checked) {
+                    cb.click();
+                }
+                return {found: true, method: 'thead'};
+            }
+        }
+        // 방법 2: "번호" 또는 "결제일시" 텍스트를 포함하는 행의 checkbox
+        const rows = document.querySelectorAll('tr');
+        for (const row of rows) {
+            const txt = row.innerText || '';
+            if (txt.includes('번호') || txt.includes('결제일시')) {
+                const cb = row.querySelector('input[type="checkbox"]');
+                if (cb && cb.offsetParent !== null) {
+                    if (!cb.checked) {
+                        cb.click();
+                    }
+                    return {found: true, method: 'header-row'};
+                }
+            }
+        }
+        return {found: false, method: 'none'};
+    }""")
+    return result.get("found", False)
+
+
+def click_bulk_view(page) -> bool:
+    """텍스트='일괄열람출력' 버튼 클릭."""
+    result = page.evaluate("""() => {
+        // button, input[type=button/submit], a 모두 검색
+        const candidates = [
+            ...document.querySelectorAll('button'),
+            ...document.querySelectorAll('input[type="button"]'),
+            ...document.querySelectorAll('input[type="submit"]'),
+            ...document.querySelectorAll('a'),
+        ];
+        for (const el of candidates) {
+            const text = (el.textContent || el.value || '').trim();
+            if (text === '일괄열람출력' && el.offsetParent !== null) {
+                el.click();
+                return true;
+            }
+        }
+        return false;
+    }""")
+    return bool(result)
+
+
+def has_pending_rows(page) -> int:
+    """현재 페이지에 미열람 상태 행 개수."""
+    count = page.evaluate("""() => {
+        let n = 0;
+        const rows = document.querySelectorAll('tbody tr');
+        for (const row of rows) {
+            const txt = row.innerText || '';
+            // 미열람 텍스트 포함 또는 행 체크박스가 비활성화되지 않은 경우
+            const hasPending = txt.includes('미열람');
+            const cb = row.querySelector('input[type="checkbox"]');
+            const hasActiveCb = cb && !cb.disabled && cb.offsetParent !== null;
+            if (hasPending || hasActiveCb) {
+                n++;
+            }
+        }
+        return n;
+    }""")
+    return int(count or 0)
+
+
+def go_next_page(page) -> bool:
+    """다음 페이지 이동. 다음 페이지 없으면 False."""
+    result = page.evaluate("""() => {
+        // 방법 1: aria-label="다음"
+        const ariaNext = document.querySelector('[aria-label="다음"]');
+        if (ariaNext && ariaNext.offsetParent !== null) {
+            ariaNext.click();
+            return true;
+        }
+        // 방법 2: id에 pageList_next 포함
+        const idNext = document.querySelector('a[id*="pageList_next"]');
+        if (idNext && idNext.offsetParent !== null) {
+            idNext.click();
+            return true;
+        }
+        // 방법 3: class에 w2pageList_next_btn 포함
+        const clsNext = document.querySelector('.w2pageList_next_btn');
+        if (clsNext && clsNext.offsetParent !== null) {
+            clsNext.click();
+            return true;
+        }
+        // 방법 4: 텍스트가 "다음"인 링크/버튼
+        const all = [...document.querySelectorAll('a, button')];
+        for (const el of all) {
+            if ((el.textContent || '').trim() === '다음' && el.offsetParent !== null) {
+                el.click();
+                return true;
+            }
+        }
+        return false;
+    }""")
+    return bool(result)
+
+
+def process_batch(page, dl_dir, save_dir, batch_idx) -> str:
+    """한 페이지 분량 일괄 처리. 'ok' | 'empty' | 'no_button' | 'dl_fail' | 'error:<msg>'"""
+    dismiss(page)
+    page.wait_for_timeout(1000)
+
+    # 1. 미열람 행 확인
+    pending = has_pending_rows(page)
+    if pending == 0:
+        return 'empty'
+
+    print(f"  미열람 {pending}건 감지 - 전체 선택 중...", end=" ", flush=True)
+
+    # 2. 헤더 체크박스로 전체 선택
+    if not select_all_on_page(page):
+        print("(헤더 체크박스 없음)", end=" ", flush=True)
+    else:
+        print("(전체선택OK)", end=" ", flush=True)
+    page.wait_for_timeout(1000)
+
+    # 3. 일괄열람출력 버튼 클릭
+    if not click_bulk_view(page):
+        print("일괄열람출력 버튼 없음 X")
+        return 'no_button'
+    print("(일괄열람출력클릭)", end=" ", flush=True)
+
+    # 4. 확인 팝업 처리 (변환중 / 저장)
+    page.wait_for_timeout(3000)
+    confirm_popups(page)
     page.wait_for_timeout(2000)
-    for sel in ['input[value="확인"]', 'button:has-text("확인")']:
-        try:
-            page.click(sel, timeout=3000)
-            break
-        except Exception:
-            continue
+    confirm_popups(page)
 
-    # 6. 다운로드 대기
-    dl_file = wait_for_new_file(before_files, dl_dir)
+    # 5. 다운로드 대기 (30초)
+    before_files = snapshot_files(dl_dir)
+    dl_file = wait_for_new_file(before_files, dl_dir, timeout=30)
     if not dl_file:
         print("다운로드안됨 X")
-        close_viewer(page)
-        return ("dl_fail", summary)
+        return 'dl_fail'
 
-    # 7. 파일 처리: 확장자 보정
+    # 6. 확장자 보정
     if not dl_file.endswith('.pdf'):
         pdf_file = dl_file + '.pdf'
         os.rename(dl_file, pdf_file)
@@ -206,26 +268,24 @@ def process_one(page, log, dl_dir, save_dir, index):
     except Exception:
         pass
 
-    # 파일명: {index}_{원본파일명_stem}.pdf
-    stem = os.path.splitext(os.path.basename(dl_file))[0]
-    safe_stem = re.sub(r'[\\/:*?"<>|]', '_', stem)[:40]
-    new_name = f"realty_{index:04d}_{safe_stem}.pdf"
+    # 7. 파일명 변경: realty_bulk_{YYYYMMDD_HHMMSS}_{batch_idx}.pdf
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    new_name = f"realty_bulk_{ts}_{batch_idx}.pdf"
     new_path = os.path.join(save_dir, new_name)
     if os.path.exists(new_path):
-        new_path = os.path.join(save_dir, f"realty_{index:04d}_{safe_stem}_{int(time.time())}.pdf")
+        new_path = os.path.join(save_dir, f"realty_bulk_{ts}_{batch_idx}_{int(time.time())}.pdf")
     shutil.move(dl_file, new_path)
     print(f"-> {os.path.basename(new_path)} OK")
 
-    close_viewer(page)
-    return ("ok", summary, new_path)
+    return 'ok'
 
 
 def main():
     cfg_path = "config.json"
-    total = 999
+    max_batches = 99
     for arg in sys.argv[1:]:
         if arg.isdigit():
-            total = int(arg)
+            max_batches = int(arg)
         else:
             cfg_path = arg
 
@@ -242,7 +302,7 @@ def main():
     os.makedirs(save_dir, exist_ok=True)
     os.makedirs(os.path.dirname(log_path) or '.', exist_ok=True)
 
-    print(f"건수: {total}, 이미완료: {len(log['completed'])}건")
+    print(f"최대 배치: {max_batches}, 이미완료: {len(log['completed'])}배치")
     print(f"저장: {save_dir}")
     print("\n[사전 확인] TouchEn nxKey 보안 프로그램 설치 필수.\n")
 
@@ -287,57 +347,52 @@ def main():
             browser.close()
             return
 
-        ok, fail, done = 0, 0, 0
+        batch_idx = 0
         consecutive_fails = 0
-        start_index = len(log.get("completed", []))
 
-        while done < total:
-            done += 1
-            idx = start_index + done
-            print(f"[{done}] ", end="", flush=True)
+        while batch_idx < max_batches:
+            print(f"\n[배치 {batch_idx + 1}] ", end="", flush=True)
 
             try:
-                result = process_one(page, log, dl_dir, save_dir, idx)
-
-                if result[0] == "no_more":
-                    print("열람 버튼 없음 - 완료")
-                    break
-                elif result[0] == "ok":
-                    _, summary, filepath = result
-                    log["completed"].append({
-                        "summary": summary,
-                        "file": filepath,
-                        "time": datetime.now().isoformat(),
-                    })
-                    ok += 1
-                    consecutive_fails = 0
-                else:
-                    status = result[0]
-                    summary = result[1] if len(result) > 1 else ""
-                    log["failed"].append({
-                        "summary": summary,
-                        "reason": status,
-                        "time": datetime.now().isoformat(),
-                    })
-                    fail += 1
-                    consecutive_fails += 1
-
+                status = process_batch(page, dl_dir, save_dir, batch_idx)
             except Exception as e:
-                print(f"오류: {str(e)[:60]} X")
-                log["failed"].append({
-                    "summary": "",
-                    "error": str(e)[:100],
+                status = f"error:{str(e)[:80]}"
+
+            if status == 'empty':
+                print("미열람 없음 - 완료")
+                break
+            elif status == 'ok':
+                log["completed"].append({
+                    "batch_idx": batch_idx,
+                    "file": f"realty_bulk_{batch_idx}.pdf",
                     "time": datetime.now().isoformat(),
+                    "items_in_batch": "N/A",
                 })
-                fail += 1
-                consecutive_fails += 1
-                close_viewer(page)
+                save_log(log, log_path)
+                batch_idx += 1
+                consecutive_fails = 0
+
+                # 다음 페이지 이동 시도
                 page.wait_for_timeout(2000)
                 dismiss(page)
-
-            # 연속 3회 실패 시 페이지 복구
-            if consecutive_fails >= 3:
-                print("\n  [경고] 연속 3회 실패 - 페이지 복구 중...")
+                if not go_next_page(page):
+                    print("  다음 페이지 없음 - 완료")
+                    break
+                page.wait_for_timeout(3000)
+                dismiss(page)
+            else:
+                print(f"  실패: {status}")
+                log["failed"].append({
+                    "batch_idx": batch_idx,
+                    "reason": status,
+                    "time": datetime.now().isoformat(),
+                })
+                save_log(log, log_path)
+                consecutive_fails += 1
+                if consecutive_fails >= 3:
+                    print("\n  [중단] 연속 3회 실패")
+                    break
+                # 페이지 복구 시도
                 try:
                     page.evaluate(f"""() => {{
                         const el = document.getElementById('{BTN_MENU_REALTY_APPLY_RESULT}');
@@ -345,19 +400,16 @@ def main():
                     }}""")
                     page.wait_for_timeout(4000)
                     dismiss(page)
-                    consecutive_fails = 0
                 except Exception:
                     pass
-
-            if done % 5 == 0:
-                save_log(log, log_path)
 
         save_log(log, log_path)
 
         print(f"\n{'='*50}")
-        print(f"  완료! 성공:{ok} 실패:{fail}")
+        print(f"  완료! 처리배치:{batch_idx} 실패:{len(log['failed'])}")
         print(f"  저장: {save_dir}")
         print(f"{'='*50}")
+        print("※ 일괄 PDF는 건별 파일명 매칭이 불가합니다. 내용으로 식별해주세요.")
         input(">>> Enter로 브라우저 닫기 ")
         browser.close()
 

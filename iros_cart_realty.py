@@ -352,7 +352,7 @@ def main():
     print("\n[사전 확인]")
     print("  - TouchEn nxKey 보안 프로그램이 설치되어 있어야 합니다.")
     print("  - 로그인은 브라우저에서 수동으로 진행합니다.")
-    print("  - 결제는 완료 후 수동으로 진행합니다 (한 번에 최대 10건).\n")
+    print("  - 결제는 완료 후 수동으로 진행합니다 (한 페이지당 최대 10건씩 일괄 열람 가능 (부동산)).\n")
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=False, slow_mo=50, args=["--window-size=1400,900"])
@@ -460,7 +460,7 @@ def main():
                 const m = document.body.innerText.match(/전체\\s*(\\d+)\\s*건/);
                 return m ? m[1] : '확인불가';
             }""")
-            print(f"  ★ 결제대상: {count}건 - 10건씩 결제해주세요!")
+            print(f"  ★ 결제대상: {count}건 - 한 페이지당 최대 10건씩 일괄 열람 가능 (부동산)")
         except Exception:
             print("  결제대상 페이지 이동 실패 - 상단 메뉴에서 직접 이동해주세요")
         input(">>> 결제 완료 후 Enter (브라우저 닫힘) ")
