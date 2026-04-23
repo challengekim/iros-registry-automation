@@ -20,7 +20,7 @@ CHECKLIST = """
     (설치 안 되어 있으면 중간에 설치 페이지가 뜨며, 이 경우
      브라우저 재시작 후 처음부터 다시 실행해야 합니다)
  3. iros.go.kr 회원가입 + 공동인증서/간편인증 수단 준비
- 4. 결제는 반드시 수동 (법인: 10만원 미만 일괄 / 부동산: 페이지당 10건)
+ 4. 결제는 반드시 수동 (법인: 페이지당 10건 / 부동산: 로그인 시 10만원 미만 일괄)
  5. 로그인은 스크립트 실행 중 브라우저에서 직접 진행 (자동화 불가)
 
 메뉴별 필요 입력 파일 (선택한 메뉴만 준비하면 됩니다):
@@ -61,7 +61,7 @@ REALTY_EXAMPLE = """[
 
 MANUAL_REMINDER = (
     "\n[안내] 브라우저가 열리면 iros.go.kr에 수동 로그인 후 Enter를 누르세요.\n"
-    "      결제는 수동 진행 (법인: 10만원 미만 일괄 / 부동산: 페이지당 10건).\n"
+    "      결제는 수동 진행 (법인: 페이지당 10건 / 부동산: 로그인 시 10만원 미만 일괄).\n"
 )
 
 
@@ -179,7 +179,7 @@ def cart_realty(cfg, cfg_path):
 
 def download_realty(cfg_path):
     print(MANUAL_REMINDER)
-    max_batches = input("최대 배치 수 (기본 99, 페이지당 10건 일괄): ").strip() or "99"
+    max_batches = input("최대 배치 수 (기본 99, 한 페이지 단위로 일괄열람출력→일괄저장): ").strip() or "99"
     input("Enter로 시작 (Ctrl+C 취소)")
     run_script("iros_download_realty.py", [cfg_path, max_batches])
 

@@ -276,7 +276,7 @@ def main():
                 const m = document.body.innerText.match(/전체\\s*(\\d+)\\s*건/);
                 return m ? m[1] : '확인불가';
             }""")
-            print(f"  ★ 결제대상: {count}건 - 로그인 상태에서 한 번에 10만원 미만까지 일괄 결제 (법인)")
+            print(f"  ★ 결제대상: {count}건 - 페이지당 최대 10건 결제 (법인) · 10건 초과 방법을 아시면 제보: kimtaewoo1201@gmail.com")
         except:
             print("  결제대상 페이지 이동 실패 - 직접 이동해주세요")
         input(">>> 결제 완료 후 Enter (브라우저 닫힘) ")

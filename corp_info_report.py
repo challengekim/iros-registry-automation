@@ -147,7 +147,7 @@ def main():
     bizno_path = cfg.get('bizno_results', './data/bizno_results.json')
     download_log_path = cfg.get('download_log', './logs/download_log.json')
     save_dir = cfg.get('save_dir', '~/Downloads/등기부등본')
-    output_path = cfg.get('report_output', cfg.get('cdd_output', './output/법인정보_종합리포트.xlsx'))
+    output_path = cfg.get('report_output', './output/법인정보_종합리포트.xlsx')
 
     # 데이터 로드
     print("데이터 로드 중...")
