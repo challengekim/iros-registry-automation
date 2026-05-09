@@ -38,6 +38,66 @@ python3 iros_wizard.py
 
 ---
 
+## Install as CLI (pip / Printing Press 방식)
+
+`iros` CLI를 설치하면 터미널 한 줄로 각 단계를 직접 실행할 수 있습니다. Claude Code 에이전트와 연동하거나 스크립트에서 호출할 때 특히 유용합니다.
+
+```bash
+# 1. 저장소 클론 후 editable 설치
+git clone https://github.com/challengekim/iros-registry-automation.git
+cd iros-registry-automation
+pip install -e .
+playwright install chromium
+
+# 2. 설정 파일 준비
+cp config.json.example config.json
+# config.json 편집 (download_dir, corpnum_list 경로 등)
+```
+
+### 서브커맨드 요약
+
+| 명령어 | 설명 |
+|--------|------|
+| `iros wizard` | 대화형 메뉴 (기존 `python3 iros_wizard.py`와 동일) |
+| `iros corp-cart [--by-corpnum\|--by-name]` | 법인등기 장바구니 담기 |
+| `iros corp-download [--total N]` | 법인등기 결제 후 열람·저장 |
+| `iros realty-cart` | 부동산 장바구니 담기 |
+| `iros realty-download` | 부동산 결제 후 열람·저장 |
+| `iros bizno` | 사업자번호 → 법인정보 조회 |
+| `iros report` | PDF → 종합 리포트 엑셀 생성 |
+| `iros version` | 버전 출력 |
+
+모든 서브커맨드에 `--config PATH`로 설정 파일 경로를 지정할 수 있습니다.
+
+### Claude Code 스킬 등록
+
+```bash
+# 프로젝트 스킬 디렉터리를 전역으로 연결
+cp -r .claude/skills/iros ~/.claude/skills/iros
+# 또는 심볼릭 링크
+ln -s "$(pwd)/.claude/skills/iros" ~/.claude/skills/iros
+```
+
+등록 후 Claude Code에서 `등기부등본`, `iros`, `법인등기 자동화` 등을 언급하면 스킬이 자동 안내합니다.
+
+### MCP 서버 (선택)
+
+```bash
+# mcp 의존성 포함 설치
+pip install -e ".[mcp]"
+
+# Claude Code settings.json에 추가
+# {
+#   "mcpServers": {
+#     "iros": { "command": "iros-mcp", "args": [] }
+#   }
+# }
+```
+
+MCP tools: `corp_cart`, `corp_download`, `realty_cart`, `realty_download`, `bizno_lookup`, `generate_report`
+
+---
+
 ## TouchEn nxKey 사전 설치 (중요)
 
 IROS는 보안 프로그램 **TouchEn nxKey**를 요구합니다. 설치되지 않은 채로 스크립트를 실행하면 중간에 설치 페이지가 뜨고, **설치 후 브라우저를 재시작하여 처음부터 다시 실행**해야 합니다.
