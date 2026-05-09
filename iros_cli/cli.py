@@ -96,8 +96,8 @@ def cmd_realty_cart(args: argparse.Namespace) -> int:
 
 
 def cmd_realty_download(args: argparse.Namespace) -> int:
-    cfg_path, _ = _resolve_config(args.config)
-    if _ is None:
+    cfg_path, cfg = _resolve_config(args.config)
+    if cfg is None:
         return 1
     import iros_wizard
     try:
@@ -158,7 +158,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     mode_group = p_corp_cart.add_mutually_exclusive_group()
     mode_group.add_argument(
-        "--by-corpnum", dest="by_name", action="store_false", default=False,
+        "--by-corpnum", dest="by_name", action="store_false",
         help="법인등록번호 기반 (기본)"
     )
     mode_group.add_argument(

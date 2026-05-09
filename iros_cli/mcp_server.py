@@ -20,11 +20,12 @@ except ImportError:
 DEFAULT_CONFIG = "./config.json"
 
 
-def _run_iros(*args: str, config: str = DEFAULT_CONFIG) -> str:
-    """iros CLI 서브커맨드를 subprocess로 실행하고 stdout+stderr를 반환."""
+def _run_iros(*args: str) -> str:
+    """iros CLI 서브커맨드를 subprocess로 실행하고 stdout+stderr를 반환.
+
+    호출자가 `--config` 등 모든 플래그를 명시적으로 전달해야 합니다.
+    """
     cmd = [sys.executable, "-m", "iros_cli.cli"] + list(args)
-    if "--config" not in args and config != DEFAULT_CONFIG:
-        cmd += ["--config", config]
     result = subprocess.run(
         cmd,
         capture_output=True,
