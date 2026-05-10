@@ -64,7 +64,7 @@ def cmd_wizard(args: argparse.Namespace) -> int:
     import iros_wizard
     try:
         iros_wizard.main()
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, EOFError):
         print("\n[중단됨]")
         return 130
     return 0
@@ -122,8 +122,14 @@ def cmd_realty_cart(args: argparse.Namespace) -> int:
         return 1
     import iros_wizard
     realty_path = cfg.get('realty_list', './data/iros_realties.json')
-    if not iros_wizard.ensure_input_file(realty_path, "realty"):
-        return 1
+    try:
+        # ensure_input_file("realty") may prompt via prompt_realty_input
+        # if the file is missing — guard against Ctrl+C / piped stdin.
+        if not iros_wizard.ensure_input_file(realty_path, "realty"):
+            return 1
+    except (KeyboardInterrupt, EOFError):
+        print("\n[중단됨]")
+        return 130
     print(iros_wizard.MANUAL_REMINDER)
     print("[안내] '검색결과가 많아...' 팝업이 뜨면 자동으로 skip 처리됩니다.")
     print("      이 경우 동/호수/건물명을 추가해 입력을 구체화한 뒤 재실행하세요.\n")
