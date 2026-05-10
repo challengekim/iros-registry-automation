@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import subprocess
 import sys
 
 from iros_cli import __version__
@@ -34,8 +35,29 @@ def _resolve_config(path: str) -> tuple[str, dict | None]:
         return path, json.load(f)
 
 
+def _run_script_with_exitcode(script_name: str, extra_args: list[str]) -> int:
+    """프로젝트 루트의 iros_*.py 스크립트를 subprocess로 실행하고 종료코드를 반환.
+
+    iros_wizard.run_script와 달리 returncode를 전파합니다.
+    """
+    import iros_wizard
+    script_dir = os.path.dirname(os.path.abspath(iros_wizard.__file__))
+    script_path = os.path.join(script_dir, script_name)
+    if not os.path.exists(script_path):
+        print(f"[오류] 스크립트가 없습니다: {script_path}", file=sys.stderr)
+        return 1
+    cmd = [sys.executable, script_path] + list(extra_args)
+    print(f"\n실행: {' '.join(cmd)}\n")
+    try:
+        result = subprocess.run(cmd, cwd=script_dir)
+        return result.returncode
+    except KeyboardInterrupt:
+        print("\n[중단됨]")
+        return 130
+
+
 # ---------------------------------------------------------------------------
-# Subcommand handlers — each returns int (0 = success, 1 = error)
+# Subcommand handlers — each returns int (0 = success, non-zero = error)
 # ---------------------------------------------------------------------------
 
 def cmd_wizard(args: argparse.Namespace) -> int:
@@ -44,6 +66,7 @@ def cmd_wizard(args: argparse.Namespace) -> int:
         iros_wizard.main()
     except KeyboardInterrupt:
         print("\n[중단됨]")
+        return 130
     return 0
 
 
@@ -52,15 +75,23 @@ def cmd_corp_cart(args: argparse.Namespace) -> int:
     if cfg is None:
         return 1
     import iros_wizard
+    if args.by_name:
+        companies_path = cfg.get('companies_list', './data/iros_companies.json')
+        if not iros_wizard.ensure_input_file(companies_path, "companies"):
+            return 1
+        script = "iros_cart.py"
+    else:
+        corpnum_path = cfg.get('corpnum_list', './data/iros_corpnums.json')
+        if not iros_wizard.ensure_input_file(corpnum_path, "corpnums"):
+            return 1
+        script = "iros_cart_by_corpnum.py"
+    print(iros_wizard.MANUAL_REMINDER)
     try:
-        if args.by_name:
-            iros_wizard.cart_by_company(cfg, cfg_path)
-        else:
-            # default: --by-corpnum
-            iros_wizard.cart_by_corpnum(cfg, cfg_path)
-    except KeyboardInterrupt:
+        input("Enter로 시작 (Ctrl+C 취소)")
+    except (KeyboardInterrupt, EOFError):
         print("\n[중단됨]")
-    return 0
+        return 130
+    return _run_script_with_exitcode(script, [cfg_path])
 
 
 def cmd_corp_download(args: argparse.Namespace) -> int:
@@ -68,19 +99,21 @@ def cmd_corp_download(args: argparse.Namespace) -> int:
     if cfg is None:
         return 1
     import iros_wizard
+    print(iros_wizard.MANUAL_REMINDER)
+    if args.total is not None:
+        total_str = str(args.total)
+    else:
+        try:
+            total_str = input("받을 건수 (기본 999): ").strip() or "999"
+        except (KeyboardInterrupt, EOFError):
+            print("\n[중단됨]")
+            return 130
     try:
-        if args.total is not None:
-            # total이 지정된 경우: stdin 프롬프트 없이 직접 run_script 호출
-            total_str = str(args.total)
-            print(iros_wizard.MANUAL_REMINDER)
-            input("Enter로 시작 (Ctrl+C 취소)")
-            iros_wizard.run_script("iros_download.py", [cfg_path, total_str])
-        else:
-            # total 미지정: 기존 download_corp 그대로 (stdin에서 물어봄)
-            iros_wizard.download_corp(cfg_path)
-    except KeyboardInterrupt:
+        input("Enter로 시작 (Ctrl+C 취소)")
+    except (KeyboardInterrupt, EOFError):
         print("\n[중단됨]")
-    return 0
+        return 130
+    return _run_script_with_exitcode("iros_download.py", [cfg_path, total_str])
 
 
 def cmd_realty_cart(args: argparse.Namespace) -> int:
@@ -88,11 +121,18 @@ def cmd_realty_cart(args: argparse.Namespace) -> int:
     if cfg is None:
         return 1
     import iros_wizard
+    realty_path = cfg.get('realty_list', './data/iros_realties.json')
+    if not iros_wizard.ensure_input_file(realty_path, "realty"):
+        return 1
+    print(iros_wizard.MANUAL_REMINDER)
+    print("[안내] '검색결과가 많아...' 팝업이 뜨면 자동으로 skip 처리됩니다.")
+    print("      이 경우 동/호수/건물명을 추가해 입력을 구체화한 뒤 재실행하세요.\n")
     try:
-        iros_wizard.cart_realty(cfg, cfg_path)
-    except KeyboardInterrupt:
+        input("Enter로 시작 (Ctrl+C 취소)")
+    except (KeyboardInterrupt, EOFError):
         print("\n[중단됨]")
-    return 0
+        return 130
+    return _run_script_with_exitcode("iros_cart_realty.py", [cfg_path])
 
 
 def cmd_realty_download(args: argparse.Namespace) -> int:
@@ -100,35 +140,28 @@ def cmd_realty_download(args: argparse.Namespace) -> int:
     if cfg is None:
         return 1
     import iros_wizard
+    print(iros_wizard.MANUAL_REMINDER)
     try:
-        iros_wizard.download_realty(cfg_path)
-    except KeyboardInterrupt:
+        max_batches = input("최대 배치 수 (기본 99): ").strip() or "99"
+        input("Enter로 시작 (Ctrl+C 취소)")
+    except (KeyboardInterrupt, EOFError):
         print("\n[중단됨]")
-    return 0
+        return 130
+    return _run_script_with_exitcode("iros_download_realty.py", [cfg_path, max_batches])
 
 
 def cmd_bizno(args: argparse.Namespace) -> int:
     cfg_path, cfg = _resolve_config(args.config)
     if cfg is None:
         return 1
-    import iros_wizard
-    try:
-        iros_wizard.run_bizno(cfg_path)
-    except KeyboardInterrupt:
-        print("\n[중단됨]")
-    return 0
+    return _run_script_with_exitcode("bizno_scrape.py", [cfg_path])
 
 
 def cmd_report(args: argparse.Namespace) -> int:
     cfg_path, cfg = _resolve_config(args.config)
     if cfg is None:
         return 1
-    import iros_wizard
-    try:
-        iros_wizard.run_report(cfg_path)
-    except KeyboardInterrupt:
-        print("\n[중단됨]")
-    return 0
+    return _run_script_with_exitcode("corp_info_report.py", [cfg_path])
 
 
 def cmd_version(args: argparse.Namespace) -> int:

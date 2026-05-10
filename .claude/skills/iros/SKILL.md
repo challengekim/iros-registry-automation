@@ -27,11 +27,16 @@ languages: [ko, en]
 1. **Chrome/Chromium** 설치 (`playwright install chromium`)
 2. **TouchEn nxKey** 보안 프로그램 사전 설치 (IROS 로그인 페이지에서 안내에 따라 설치)
 3. **IROS 계정** (iros.go.kr 회원가입 + 공동인증서/간편인증 수단 준비)
-4. **패키지 설치**:
+4. **패키지 설치 (저장소 클론 권장)**:
    ```bash
-   pip install iros-registry-automation
+   git clone https://github.com/challengekim/iros-registry-automation
+   cd iros-registry-automation
+   pip install -e .
    playwright install chromium
    ```
+   > **참고**: `pip install iros-registry-automation`만으로는 CLI(`iros`, `iros-mcp`)만 설치됩니다.
+   > Claude Code 스킬(`.claude/skills/iros/SKILL.md`)과 예시 설정(`config.json.example`)은
+   > 저장소 파일이므로, 위처럼 저장소를 클론한 뒤 editable 설치를 권장합니다.
 5. **설정 파일 준비**:
    ```bash
    cp config.json.example config.json
@@ -51,7 +56,9 @@ languages: [ko, en]
 | `iros bizno` | 사업자번호 → 법인정보 조회 | `data/고객리스트.xlsx` |
 | `iros report` | 다운로드된 PDF → 종합 리포트 엑셀 생성 | `data/bizno_results.json` + PDF |
 
-모든 명령에 `--config PATH`로 설정 파일 경로를 지정할 수 있습니다 (기본: `./config.json`).
+`--config PATH`로 설정 파일 경로를 지정할 수 있습니다 (기본: `./config.json`).
+`--config`는 `corp-cart`, `corp-download`, `realty-cart`, `realty-download`, `bizno`, `report`에만 적용됩니다.
+`wizard`와 `version`은 `--config`를 지원하지 않습니다.
 
 ## Recommended flow — 법인등기 대량 발급
 
@@ -104,4 +111,8 @@ Claude Code `settings.json`에 추가:
 }
 ```
 
-MCP tools: `corp_cart`, `corp_download`, `realty_cart`, `realty_download`, `bizno_lookup`, `generate_report`
+MCP tools: `bizno_lookup`, `generate_report`
+
+> **중요**: `corp_cart`, `corp_download`, `realty_cart`, `realty_download`는 MCP에서 제공하지 않습니다.
+> 이 기능들은 수동 브라우저 로그인 + 수동 결제가 필요하고 대화형 입력(`input()`)을 사용하여
+> stdio MCP 프로토콜과 충돌합니다. 터미널에서 `iros` CLI를 직접 사용하세요.

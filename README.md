@@ -54,6 +54,10 @@ cp config.json.example config.json
 # config.json 편집 (download_dir, corpnum_list 경로 등)
 ```
 
+> **참고**: `pip install iros-registry-automation`(비 editable)만으로는 CLI(`iros`, `iros-mcp`)만 설치됩니다.
+> Claude Code 스킬(`.claude/skills/iros/SKILL.md`)과 예시 설정(`config.json.example`)은
+> 저장소 파일이므로, 위처럼 저장소를 클론한 뒤 editable 설치(`pip install -e .`)를 권장합니다.
+
 ### 서브커맨드 요약
 
 | 명령어 | 설명 |
@@ -67,7 +71,8 @@ cp config.json.example config.json
 | `iros report` | PDF → 종합 리포트 엑셀 생성 |
 | `iros version` | 버전 출력 |
 
-모든 서브커맨드에 `--config PATH`로 설정 파일 경로를 지정할 수 있습니다.
+`--config PATH`로 설정 파일 경로를 지정할 수 있습니다.
+`--config`는 `corp-cart`, `corp-download`, `realty-cart`, `realty-download`, `bizno`, `report`에만 적용됩니다 (`wizard`, `version`은 미지원).
 
 ### Claude Code 스킬 등록
 
@@ -94,7 +99,10 @@ pip install -e ".[mcp]"
 # }
 ```
 
-MCP tools: `corp_cart`, `corp_download`, `realty_cart`, `realty_download`, `bizno_lookup`, `generate_report`
+MCP tools: `bizno_lookup`, `generate_report`
+
+> **중요**: `corp_cart`, `corp_download`, `realty_cart`, `realty_download`는 MCP에서 제공하지 않습니다.
+> 이 기능들은 수동 브라우저 로그인 + 수동 결제가 필요하므로 터미널에서 `iros` CLI를 직접 사용하세요.
 
 ---
 
