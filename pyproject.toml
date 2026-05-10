@@ -1,0 +1,62 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "iros-registry-automation"
+version = "0.1.0"
+description = "Bulk-issue Korean corporate/realty registry copies (등기부등본) from IROS (iros.go.kr) — agent-callable CLI + Claude Code skill + MCP server"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+authors = [{ name = "challengekim" }]
+keywords = ["iros", "korea", "registry", "등기부등본", "automation", "playwright", "claude-code", "mcp"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Office/Business",
+    "Natural Language :: Korean",
+]
+dependencies = [
+    "playwright>=1.40",
+    "openpyxl>=3.1",
+    "requests>=2.31",
+    "beautifulsoup4>=4.12",
+    "pytesseract>=0.3.10",
+    "pdf2image>=1.17",
+]
+
+[project.optional-dependencies]
+mcp = ["mcp>=1.0"]
+dev = ["pytest>=7"]
+
+[project.scripts]
+iros = "iros_cli.cli:main"
+iros-mcp = "iros_cli.mcp_server:main"
+
+[project.urls]
+Homepage = "https://github.com/challengekim/iros-registry-automation"
+Issues = "https://github.com/challengekim/iros-registry-automation/issues"
+
+[tool.setuptools]
+# Wrap existing flat scripts as importable modules so iros_cli can call into them.
+py-modules = [
+    "iros_wizard",
+    "iros_cart",
+    "iros_cart_by_corpnum",
+    "iros_cart_realty",
+    "iros_download",
+    "iros_download_realty",
+    "bizno_scrape",
+    "corp_info_extract",
+    "corp_info_report",
+]
+
+[tool.setuptools.packages.find]
+include = ["iros_cli*"]
